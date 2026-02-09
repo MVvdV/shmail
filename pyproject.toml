@@ -1,0 +1,23 @@
+[project]
+name = "shmail"
+version = "0.1.0"
+description = "An email client for the terminal"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "textual>=0.85.0",           # The UI framework
+    "pydantic>=2.0.0",          # For data models and settings
+    "google-api-python-client", # To talk to Gmail
+    "google-auth-oauthlib",     # For the login process
+    "keyring",                  # To store your login tokens safely
+    "rich",                     # For beautiful text formatting
+    "rich-pixels",              # To render images in the terminal
+    "Pillow",                   # To resize and process images
+    "html2text",                # To turn email HTML into readable text
+    "bleach",                   # To keep the HTML safe and clean
+    "tomli-w",                  # To write TOML files
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
