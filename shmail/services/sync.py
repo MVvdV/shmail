@@ -18,6 +18,10 @@ class SyncService:
 
     def initial_sync(self):
         """Fetches the last 500 messages and syncs them to the local DB."""
+        # 1. First sync labels so we have the master list
+        self.sync_labels()
+
+        # 2. Sync messages
         messages = self.gmail.list_messages()
         for m in messages:
             message_data = self.gmail.get_message(m["id"])
@@ -25,6 +29,14 @@ class SyncService:
                 message_id=m["id"], thread_id=m["threadId"], message_data=message_data
             )
             db.upsert_email(email_obj)
+
+    def sync_labels(self):
+        """
+        Orchestrates fetching labels from Gmail and saving them to the DB.
+        """
+        labels = self.gmail.list_labels()
+        for label in labels:
+            db.upsert_label(label["id"], label["name"], label["type"])
 
     def _parse_gmail_message(
         self, message_id: str, thread_id: str, message_data: Dict[str, Any]

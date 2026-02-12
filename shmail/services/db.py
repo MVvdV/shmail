@@ -1,7 +1,8 @@
-import sqlite3
 import contextlib
+import sqlite3
 from pathlib import Path
 from typing import Generator
+
 from shmail.config import CONFIG_DIR
 
 DB_PATH = CONFIG_DIR / "shmail.db"
@@ -48,7 +49,8 @@ class DatabaseService:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS labels (
                     id TEXT PRIMARY KEY,
-                    name TEXT UNIQUE
+                    name TEXT UNIQUE,
+                    type TEXT
                 )
             """)
 
@@ -63,13 +65,44 @@ class DatabaseService:
                 )
             """)
 
+            # 4. Global metadata/sync state
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            """)
+
+            conn.commit()
+
+    def set_metadata(self, key: str, value: str):
+        """
+        Sets a metadata value in the database.
+        """
+        with self.get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                (key, value),
+            )
+            conn.commit()
+
+    def get_metadata(self, key: str):
+        """
+        Retrieves a metadata value by key.
+        """
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT value FROM metadata WHERE key = ?", (key,)
+            ).fetchone()
+            return row["value"] if row else None
+
     def upsert_email(self, email):
         """Saves or updates an email and its label associations."""
         with self.get_connection() as conn:
             # 1. Save the email (Insert or Replace if ID exists)
             conn.execute(
                 """
-                INSERT OR REPLACE INTO emails 
+                INSERT OR REPLACE INTO emails
                 (id, thread_id, subject, sender, snippet, body, timestamp, is_read, has_attachments)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -90,8 +123,8 @@ class DatabaseService:
             for label in email.labels:
                 # Ensure the label exists in our master labels table
                 conn.execute(
-                    "INSERT OR IGNORE INTO labels (id, name) VALUES (?, ?)",
-                    (label.id, label.name),
+                    "INSERT OR IGNORE INTO labels (id, name, type) VALUES (?, ?, ?)",
+                    (label.id, label.name, label.type),
                 )
                 # Link the email to that label
                 conn.execute(
@@ -100,6 +133,28 @@ class DatabaseService:
                 )
 
             conn.commit()
+
+    def upsert_label(self, label_id: str, label_name: str, label_type: str):
+        """
+        Saves or updates a label in the master labels table.
+        """
+        with self.get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO labels (id, name, type) VALUES (?, ?, ?)",
+                (label_id, label_name, label_type),
+            )
+            conn.commit()
+
+    def get_labels(self):
+        """
+        Returns all labels from the DB.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT id, name, type FROM labels ORDER BY type ASC, name ASC"
+            )
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
 
 
 # Global instance for easy access

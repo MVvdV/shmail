@@ -18,6 +18,14 @@ dependencies = [
     "tomli-w",                  # To write TOML files
 ]
 
+[dependency-groups]
+dev = [
+    "pytest",                   # For testing
+]
+
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["shmail"]
