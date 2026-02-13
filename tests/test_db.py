@@ -7,7 +7,7 @@ from shmail.services.db import DatabaseService
 
 
 @pytest.fixture
-def temp_db(tmp_path):
+def test_db(tmp_path):
     """Provides a temporary database for testing."""
     db_file = tmp_path / "test.db"
     db_service = DatabaseService(db_path=db_file)
@@ -15,31 +15,31 @@ def temp_db(tmp_path):
     return db_service
 
 
-def test_upsert_label(temp_db):
+def test_upsert_label(test_db):
     """Tests saving and updating a label."""
     # 1. Insert a new label
-    temp_db.upsert_label("INBOX", "Inbox", "SYSTEM")
+    test_db.upsert_label("INBOX", "Inbox", "SYSTEM")
 
-    labels = temp_db.get_labels()
+    labels = test_db.get_labels()
     assert len(labels) == 1
     assert labels[0]["id"] == "INBOX"
     assert labels[0]["name"] == "Inbox"
     assert labels[0]["type"] == "SYSTEM"
 
     # 2. Update existing label (name change)
-    temp_db.upsert_label("INBOX", "Incoming", "SYSTEM")
-    labels = temp_db.get_labels()
+    test_db.upsert_label("INBOX", "Incoming", "SYSTEM")
+    labels = test_db.get_labels()
     assert len(labels) == 1
     assert labels[0]["name"] == "Incoming"
 
 
-def test_get_labels_ordering(temp_db):
+def test_get_labels_ordering(test_db):
     """Tests that labels are returned in the correct order (System first)."""
-    temp_db.upsert_label("USER_1", "Z-Label", "user")
-    temp_db.upsert_label("INBOX", "Inbox", "SYSTEM")
-    temp_db.upsert_label("USER_2", "A-Label", "user")
+    test_db.upsert_label("USER_1", "Z-Label", "user")
+    test_db.upsert_label("INBOX", "Inbox", "SYSTEM")
+    test_db.upsert_label("USER_2", "A-Label", "user")
 
-    labels = temp_db.get_labels()
+    labels = test_db.get_labels()
 
     # SYSTEM should be first
     assert labels[0]["id"] == "INBOX"
@@ -48,12 +48,12 @@ def test_get_labels_ordering(temp_db):
     assert labels[2]["name"] == "Z-Label"
 
 
-def test_metadata_storage(temp_db):
+def test_metadata_storage(test_db):
     """Test saving and retrieving metadata"""
     # Insert a new history_id
-    temp_db.set_metadata("last_history_id", "12345")
-    assert temp_db.get_metadata("last_history_id") == "12345"
+    test_db.set_metadata("last_history_id", "12345")
+    assert test_db.get_metadata("last_history_id") == "12345"
     # Overwrite an existing history_id
-    temp_db.set_metadata("last_history_id", "67890")
-    assert temp_db.get_metadata("last_history_id") == "67890"
-    assert temp_db.get_metadata("non_existent") is None
+    test_db.set_metadata("last_history_id", "67890")
+    assert test_db.get_metadata("last_history_id") == "67890"
+    assert test_db.get_metadata("non_existent") is None

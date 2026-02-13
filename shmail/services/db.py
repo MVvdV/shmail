@@ -1,7 +1,7 @@
 import contextlib
 import sqlite3
 from pathlib import Path
-from typing import Generator
+from typing import Generator, List, Optional
 
 from shmail.config import CONFIG_DIR
 
@@ -155,6 +155,36 @@ class DatabaseService:
             )
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
+
+    def remove_email(self, email_id: str):
+        """Removes an email and its label associations from the DB."""
+        with self.get_connection() as conn:
+            conn.execute("DELETE FROM emails WHERE id = ?", (email_id,))
+            conn.commit()
+
+    def update_labels(
+        self,
+        email_id: str,
+        added_label_ids: Optional[List[str]] = None,
+        removed_label_ids: Optional[List[str]] = None,
+    ):
+        """Updates labels, defaulting to empty lists if none are provided."""
+        # Convert None to empty list
+        added = added_label_ids or []
+        removed = removed_label_ids or []
+
+        with self.get_connection() as conn:
+            if removed:
+                placeholders = ", ".join(["?"] * len(removed))
+                delete_sql = f"DELETE FROM email_labels WHERE email_id = ? AND label_id IN ({placeholders})"
+                conn.execute(delete_sql, [email_id] + removed)
+
+            if added:
+                insert_sql = "INSERT OR IGNORE INTO email_labels (email_id, label_id) VALUES (?, ?)"
+                insert_params = [(email_id, list_id) for list_id in added]
+                conn.executemany(insert_sql, insert_params)
+
+            conn.commit()
 
 
 # Global instance for easy access

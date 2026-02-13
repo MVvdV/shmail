@@ -38,6 +38,24 @@ class GmailService:
         results = self.service.users().labels().list(userId="me").execute()
         return results.get("labels", [])
 
+    def get_profile(self) -> Dict[str, Any]:
+        """Gets the user's Gmail profile (includes current historyId)."""
+        profile = self.service.users().getProfile(userId="me").execute()
+        return profile
+
+    def list_history(self, start_history_id: str) -> Dict[str, Any]:
+        """
+        Lists history records since start_history_id.
+        Returns a dict containing 'history' (list of records) and 'historyId' (newest).
+        """
+        history_records = (
+            self.service.users()
+            .history()
+            .list(userId="me", startHistoryId=start_history_id)
+            .execute()
+        )
+        return history_records
+
     def trash_message(self, message_id: str):
         """Moves a message to the trash."""
         self.service.users().messages().trash(userId="me", id=message_id).execute()
