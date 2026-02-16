@@ -3,7 +3,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-"""DOMAIN MODELS"""
+# DOMAIN MODELS
 
 
 class Label(BaseModel):
@@ -17,6 +17,9 @@ class Email(BaseModel):
     thread_id: str
     subject: str
     sender: str
+    recipient_to: Optional[str] = None
+    recipient_cc: Optional[str] = None
+    recipient_bcc: Optional[str] = None
     snippet: str
     body: Optional[str] = None
     timestamp: datetime
@@ -36,12 +39,22 @@ class Thread(BaseModel):
         return max(self.messages, key=lambda m: m.timestamp)
 
 
-"""GMAIL HISTORY API MODELS for DTO's"""
+class Contact(BaseModel):
+    email: str
+    name: Optional[str] = None
+    timestamp: datetime
+
+
+class ParsedMessage(BaseModel):
+    email: Email
+    contacts: List[Contact]
+
+
+# GMAIL HISTORY API MODELS for DTO's
 
 
 class HistoryMessage(BaseModel):
-    """A minimal message object returned within history events."""
-
+    # A minimal message object returned within history events.
     id: str
     threadId: Optional[str] = None
     # Labels inside here are for 'messagesAdded'
@@ -49,16 +62,14 @@ class HistoryMessage(BaseModel):
 
 
 class HistoryEvent(BaseModel):
-    """Represents a single change event (message added, label changed, etc)."""
-
+    # Represents a single change event (message added, label changed, etc).
     message: HistoryMessage
     # Labels inside here are for 'labelsAdded' / 'labelsRemoved'
     labelIds: List[str] = Field(default_factory=list)
 
 
 class History(BaseModel):
-    """A record of multiple events associated with a specific history ID."""
-
+    # A record of multiple events associated with a specific history ID.
     id: str
     messagesAdded: List[HistoryEvent] = Field(default_factory=list)
     labelsAdded: List[HistoryEvent] = Field(default_factory=list)

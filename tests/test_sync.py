@@ -30,17 +30,18 @@ def sync_service(test_db):
 def test_incremental_sync_deleted_messages(sync_service, test_db):
     """Test handling of deleted messages."""
     # 1. Setup: Add a message to the DB manually
-    test_db.set_metadata("history_id", "1000")
-    email = Email(
-        id="msg_to_delete",
-        thread_id="t1",
-        subject="Bye",
-        sender="x@y.com",
-        snippet="...",
-        timestamp=datetime.now(),
-        labels=[Label(id="INBOX", name="Inbox", type="system")],
-    )
-    test_db.upsert_email(email)
+    with test_db.transaction() as conn:
+        test_db.set_metadata(conn, "history_id", "1000")
+        email = Email(
+            id="msg_to_delete",
+            thread_id="t1",
+            subject="Bye",
+            sender="x@y.com",
+            snippet="...",
+            timestamp=datetime.now(),
+            labels=[Label(id="INBOX", name="Inbox", type="system")],
+        )
+        test_db.upsert_email(conn, email)
 
     # 2. Mock: History API returns a deleted event
     sync_service.gmail.list_history.return_value = {
@@ -69,7 +70,8 @@ def test_incremental_sync_deleted_messages(sync_service, test_db):
 
 def test_incremental_sync_expired_id(sync_service, test_db):
     """Test fallback to initial_sync when historyId is expired (404/410)."""
-    test_db.set_metadata("history_id", "expired_id")
+    with test_db.transaction() as conn:
+        test_db.set_metadata(conn, "history_id", "expired_id")
 
     # 1. Mock: list_history raises a 404 HttpError
     resp = MagicMock()
@@ -88,20 +90,21 @@ def test_incremental_sync_expired_id(sync_service, test_db):
 
 def test_incremental_sync_label_changes(sync_service, test_db):
     """Test handling of added and removed labels."""
-    test_db.set_metadata("history_id", "1000")
-    email_id = "msg_1"
+    with test_db.transaction() as conn:
+        test_db.set_metadata(conn, "history_id", "1000")
+        email_id = "msg_1"
 
-    # Setup initial state
-    email = Email(
-        id=email_id,
-        thread_id="t1",
-        subject="Hello",
-        sender="x@y.com",
-        snippet="...",
-        timestamp=datetime.now(),
-        labels=[Label(id="UNREAD", name="Unread", type="system")],
-    )
-    test_db.upsert_email(email)
+        # Setup initial state
+        email = Email(
+            id=email_id,
+            thread_id="t1",
+            subject="Hello",
+            sender="x@y.com",
+            snippet="...",
+            timestamp=datetime.now(),
+            labels=[Label(id="UNREAD", name="Unread", type="system")],
+        )
+        test_db.upsert_email(conn, email)
 
     # Mock history: Remove UNREAD, Add INBOX
     sync_service.gmail.list_history.return_value = {

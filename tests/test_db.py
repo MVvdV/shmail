@@ -18,7 +18,8 @@ def test_db(tmp_path):
 def test_upsert_label(test_db):
     """Tests saving and updating a label."""
     # 1. Insert a new label
-    test_db.upsert_label("INBOX", "Inbox", "SYSTEM")
+    with test_db.transaction() as conn:
+        test_db.upsert_label(conn, "INBOX", "Inbox", "SYSTEM")
 
     labels = test_db.get_labels()
     assert len(labels) == 1
@@ -27,7 +28,8 @@ def test_upsert_label(test_db):
     assert labels[0]["type"] == "SYSTEM"
 
     # 2. Update existing label (name change)
-    test_db.upsert_label("INBOX", "Incoming", "SYSTEM")
+    with test_db.transaction() as conn:
+        test_db.upsert_label(conn, "INBOX", "Incoming", "SYSTEM")
     labels = test_db.get_labels()
     assert len(labels) == 1
     assert labels[0]["name"] == "Incoming"
@@ -35,9 +37,10 @@ def test_upsert_label(test_db):
 
 def test_get_labels_ordering(test_db):
     """Tests that labels are returned in the correct order (System first)."""
-    test_db.upsert_label("USER_1", "Z-Label", "user")
-    test_db.upsert_label("INBOX", "Inbox", "SYSTEM")
-    test_db.upsert_label("USER_2", "A-Label", "user")
+    with test_db.transaction() as conn:
+        test_db.upsert_label(conn, "USER_1", "Z-Label", "user")
+        test_db.upsert_label(conn, "INBOX", "Inbox", "SYSTEM")
+        test_db.upsert_label(conn, "USER_2", "A-Label", "user")
 
     labels = test_db.get_labels()
 
@@ -51,9 +54,12 @@ def test_get_labels_ordering(test_db):
 def test_metadata_storage(test_db):
     """Test saving and retrieving metadata"""
     # Insert a new history_id
-    test_db.set_metadata("last_history_id", "12345")
+    with test_db.transaction() as conn:
+        test_db.set_metadata(conn, "last_history_id", "12345")
     assert test_db.get_metadata("last_history_id") == "12345"
+
     # Overwrite an existing history_id
-    test_db.set_metadata("last_history_id", "67890")
+    with test_db.transaction() as conn:
+        test_db.set_metadata(conn, "last_history_id", "67890")
     assert test_db.get_metadata("last_history_id") == "67890"
     assert test_db.get_metadata("non_existent") is None
