@@ -1,6 +1,7 @@
 import tomllib
 import tomli_w
 from pathlib import Path
+from typing import Optional
 from pydantic import BaseModel, Field
 
 # 1. Define where our data lives
@@ -10,6 +11,7 @@ CONFIG_FILE = CONFIG_DIR / "config.toml"
 
 # 2. Define our Settings model
 class Settings(BaseModel):
+    email: Optional[str] = Field(default=None, description="The user's Gmail address")
     theme: str = Field(default="charming", description="The UI theme name")
     refresh_interval: int = Field(
         default=300, description="Seconds between Gmail syncs"

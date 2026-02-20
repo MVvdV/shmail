@@ -5,7 +5,7 @@ description = "An email client for the terminal"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "textual>=0.85.0",           # The UI framework
+    "textual>=0.85.0",          # The UI framework
     "pydantic>=2.0.0",          # For data models and settings
     "google-api-python-client", # To talk to Gmail
     "google-auth-oauthlib",     # For the login process

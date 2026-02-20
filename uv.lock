@@ -939,11 +939,15 @@ dependencies = [
     { name = "keyring" },
     { name = "pillow" },
     { name = "pydantic" },
-    { name = "pytest" },
     { name = "rich" },
     { name = "rich-pixels" },
     { name = "textual" },
     { name = "tomli-w" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
 ]
 
 [package.metadata]
@@ -955,12 +959,14 @@ requires-dist = [
     { name = "keyring" },
     { name = "pillow" },
     { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "pytest" },
     { name = "rich" },
     { name = "rich-pixels" },
     { name = "textual", specifier = ">=0.85.0" },
     { name = "tomli-w" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest" }]
 
 [[package]]
 name = "textual"

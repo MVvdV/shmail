@@ -6,7 +6,7 @@ from googleapiclient.errors import HttpError
 
 from shmail.models import Email, Label
 from shmail.services.db import DatabaseService
-from shmail.services.sync import SyncService
+from shmail.services.sync import SyncService, SyncResult
 
 
 # Fixture to create a temporary, fresh database for every test
@@ -27,8 +27,43 @@ def sync_service(test_db):
         return service
 
 
+def test_incremental_sync_returns_result(sync_service, test_db):
+    """Verify incremental_sync returns a populated SyncResult."""
+    with test_db.transaction() as conn:
+        test_db.set_metadata(conn, "history_id", "1000")
+
+    # Mock history API with 1 message added and 1 deleted
+    sync_service.gmail.list_history.return_value = {
+        "history": [
+            {
+                "id": "1001",
+                "messagesAdded": [
+                    {"message": {"id": "new_msg", "threadId": "t1", "labelIds": []}}
+                ],
+                "messagesDeleted": [{"message": {"id": "old_msg", "threadId": "t1"}}],
+            }
+        ],
+        "historyId": "1001",
+    }
+
+    # Mock get_message for the added message
+    sync_service.gmail.get_message.return_value = {
+        "id": "new_msg",
+        "threadId": "t1",
+        "labelIds": [],
+        "raw": "Ym9keQ==",  # Base64 for 'body'
+    }
+
+    result = sync_service.incremental_sync()
+
+    assert isinstance(result, SyncResult)
+    assert result.added == 1
+    assert result.removed == 1
+    assert result.any_changes is True
+
+
 def test_incremental_sync_deleted_messages(sync_service, test_db):
-    """Test handling of deleted messages."""
+    """Test handling of deleted messages and check result."""
     # 1. Setup: Add a message to the DB manually
     with test_db.transaction() as conn:
         test_db.set_metadata(conn, "history_id", "1000")
@@ -57,9 +92,10 @@ def test_incremental_sync_deleted_messages(sync_service, test_db):
     }
 
     # 3. Execute
-    sync_service.incremental_sync()
+    result = sync_service.incremental_sync()
 
-    # 4. Verify the message is gone and history_id is updated
+    # 4. Verify
+    assert result.removed == 1
     with test_db.get_connection() as conn:
         row = conn.execute(
             "SELECT id FROM emails WHERE id = ?", ("msg_to_delete",)
@@ -82,14 +118,15 @@ def test_incremental_sync_expired_id(sync_service, test_db):
     sync_service.initial_sync = MagicMock()
 
     # 3. Execute
-    sync_service.incremental_sync()
+    result = sync_service.incremental_sync()
 
-    # 4. Verify initial_sync was called
+    # 4. Verify initial_sync was called and result reflects changes
     assert sync_service.initial_sync.called
+    assert result.any_changes is True
 
 
 def test_incremental_sync_label_changes(sync_service, test_db):
-    """Test handling of added and removed labels."""
+    """Test handling of added and removed labels and check result."""
     with test_db.transaction() as conn:
         test_db.set_metadata(conn, "history_id", "1000")
         email_id = "msg_1"
@@ -121,9 +158,10 @@ def test_incremental_sync_label_changes(sync_service, test_db):
     }
 
     # 3. Execute
-    sync_service.incremental_sync()
+    result = sync_service.incremental_sync()
 
-    # 4. Check if the labels in the DB match the expected new state
+    # 4. Check results
+    assert result.labels_changed == 2  # 1 removed, 1 added
     with test_db.get_connection() as conn:
         rows = conn.execute(
             "SELECT label_id FROM email_labels WHERE email_id = ?", (email_id,)

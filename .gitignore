@@ -13,3 +13,6 @@ wheels/
 project.md
 agent.md
 handover.md
+
+# dot files
+.DS_Store

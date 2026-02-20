@@ -1,0 +1,34 @@
+/* Core Variables */
+$primary: #f82585;
+$secondary: #8c25f8;
+$background: #121212;
+$surface: #1e1e1e;
+$text: #eeeeee;
+
+Screen {
+    background: $background;
+    color: $text;
+}
+AppHeader {
+    dock: top;
+    height: 3;
+    layout: space-between;
+}
+AppFooter {
+    dock: bottom;
+    layout: space-between;
+}
+
+#sidebar {
+    width: 25%;
+    height: 100%;
+    background: $surface;
+    border-right: tall $secondary;
+    padding: 1;
+}
+
+#message-list {
+    width: 75%;
+    height: 100%;
+    padding: 1;
+}

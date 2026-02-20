@@ -1,8 +1,10 @@
 import base64
 import email.utils
+import logging
+from dataclasses import dataclass
 from datetime import datetime
 from email import message_from_bytes
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from googleapiclient.errors import HttpError
 
@@ -12,25 +14,66 @@ from shmail.services.db import db
 from shmail.services.gmail import GmailService
 from shmail.services.parser import MessageParser
 
+if TYPE_CHECKING:
+    from shmail.app import ShmailApp
+
+# Module-level logger following the project standard
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SyncResult:
+    """Feedback on what changed during a sync cycle."""
+
+    added: int = 0
+    removed: int = 0
+    labels_changed: int = 0
+
+    @property
+    def any_changes(self) -> bool:
+        """Determines if anything actually happened during the sync."""
+        return any([self.added, self.removed, self.labels_changed])
+
 
 class SyncService:
-    def __init__(self, email: str, database=None):
+    def __init__(self, email: str, database=None, app: Optional["ShmailApp"] = None):
         self.email = email
         self.auth = AuthService(email)
         self.gmail = GmailService(self.auth.get_credentials())
         self.db = database or db
+        self.app = app
         self.parser = MessageParser()
 
+    def _update_status(self, message: str, progress: Optional[float] = None) -> None:
+        """
+        Internal bridge to the Global Progress Bus.
+        Updates the TUI status bar and the persistent diagnostic logs.
+        """
+        # Every user-facing status update is also a diagnostic log entry.
+        logger.info(message)
+        if self.app:
+            self.app.status_message = message
+            if progress is not None:
+                self.app.status_progress = progress
+
     def initial_sync(self):
-        # Fetches the last 500 messages and syncs them to the local DB.
-        # 1. First sync labels so we have the master list
+        """
+        Fetches the last 500 messages and syncs them to the local DB.
+        Decision: Progress is reported directly via self.app (Progress Bus).
+        """
+        self._update_status("Syncing labels...", 0.05)
+
         self.sync_labels()
 
-        # 2. Sync messages
+        self._update_status("Fetching message list...", 0.1)
         messages = self.gmail.list_messages()
+        total = len(messages)
 
         with self.db.transaction() as conn:
-            for m in messages:
+            for i, m in enumerate(messages):
+                progress = 0.1 + ((i + 1) / total) * 0.85
+                self._update_status(f"Syncing email {i + 1} of {total}...", progress)
+
                 message_data = self.gmail.get_message(m["id"])
                 parsed = self.parser.parse_gmail_response(
                     message_id=m["id"],
@@ -44,17 +87,26 @@ class SyncService:
                         conn, contact.email, contact.name, contact.timestamp.isoformat()
                     )
 
-            # 3. Get profile and save initial history_id to metadata
+            self._update_status("Initial sync complete.", 1.0)
             profile = self.gmail.get_profile()
             self.db.set_metadata(conn, "history_id", profile["historyId"])
 
-    def incremental_sync(self):
-        # Synchronizes changes (new messages, label updates, deletions) since the last sync.
+    def incremental_sync(self) -> SyncResult:
+        """
+        Synchronizes changes since the last sync.
+        Returns a SyncResult summary for the UI to react to.
+        """
+        self._update_status("Checking for changes...", 0.05)
+        result = SyncResult()
         history_id = self.db.get_metadata("history_id")
-        if history_id is None:
-            self.initial_sync()
-            return
 
+        if history_id is None:
+            self._update_status("No history_id found. Performing initial sync.", 1.0)
+            self.initial_sync()
+            # We return a dummy result with one change to trigger a UI refresh
+            return SyncResult(added=1)
+
+        self._update_status(f"Starting sync from history_id: {history_id}", 0.1)
         page_token = None
 
         try:
@@ -69,7 +121,7 @@ class SyncService:
 
                 with self.db.transaction() as conn:
                     for record in data.history:
-                        self._process_history_record(conn, record)
+                        self._process_history_record(conn, record, result)
 
                     # Update current history_id to the most recent one
                     self.db.set_metadata(conn, "history_id", data.historyId)
@@ -79,11 +131,18 @@ class SyncService:
                 if not page_token:
                     break
 
+            self._update_status(
+                f"Sync complete. Added: {result.added}, Removed: {result.removed}", 1.0
+            )
+            return result
+
         except HttpError as error:
             if error.resp.status in [404, 410]:
-                print("History ID expired. Performing full sync...")
+                logger.warning("History ID expired. Performing full sync...")
                 self.initial_sync()
+                return SyncResult(added=1)
             else:
+                logger.error(f"Sync failed with HTTP error: {error}")
                 raise error
 
     def sync_labels(self):
@@ -93,9 +152,10 @@ class SyncService:
             for label in labels:
                 self.db.upsert_label(conn, label["id"], label["name"], label["type"])
 
-    def _process_history_record(self, conn, record):
+    def _process_history_record(self, conn, record, result: SyncResult):
         # Processes individual history events (added, removed, deleted) within a transaction.
         for added in record.messagesAdded:
+            result.added += 1
             try:
                 message_data = self.gmail.get_message(added.message.id)
                 parsed = self.parser.parse_gmail_response(
@@ -118,6 +178,7 @@ class SyncService:
                 raise e
 
         for label_change in record.labelsAdded:
+            result.labels_changed += 1
             self.db.update_labels(
                 conn,
                 label_change.message.id,
@@ -125,6 +186,7 @@ class SyncService:
                 removed_label_ids=[],
             )
         for label_change in record.labelsRemoved:
+            result.labels_changed += 1
             self.db.update_labels(
                 conn,
                 label_change.message.id,
@@ -132,4 +194,5 @@ class SyncService:
                 removed_label_ids=label_change.labelIds,
             )
         for deleted in record.messagesDeleted:
+            result.removed += 1
             self.db.remove_email(conn, deleted.message.id)

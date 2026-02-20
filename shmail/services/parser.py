@@ -1,11 +1,15 @@
 import base64
 import email.utils
+import logging
 from datetime import datetime, timezone
 from email import message_from_bytes
 from email.utils import getaddresses
 from typing import Any, Dict, List, Optional
 
 from shmail.models import Contact, Email, Label, ParsedMessage
+
+# Module-level logger following the project standard
+logger = logging.getLogger(__name__)
 
 
 class MessageParser:
