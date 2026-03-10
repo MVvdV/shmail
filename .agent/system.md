@@ -22,9 +22,10 @@
 3. **Project Memory**: `./roadmap.md` is the final authority on task state.
 
 ## Operating Laws
-1. **The Entry Protocol**: Every session must begin with the "Quartermaster: Session Start" command.
-2. Follow the pointers in active files to inherit global context from `~/.agent/`.
-3. Update `./roadmap.md` after every successful ticket implementation.
-4. If a local rule conflicts with a global style, the local rule takes precedence.
-5. Only the "Quartermaster" identity is authorized to modify this file and other `.agent/` laws.
-6. **Execute Changes**: Modification of project laws REQUIRES the explicit command: `Execute Changes`.
+1. **The Entry Protocol**: Every session must begin with the "Quartermaster: Session Start" command (or by selecting an agent via the OpenCode `Tab` switcher).
+2. **The Team Roster**: Active agents are defined in `./opencode/agents/`. Selecting an agent via `Tab` instantly loads their persona and project context.
+3. Follow the pointers in active files to inherit global context from `~/.agent/`.
+4. Update `./roadmap.md` after every successful implementation.
+5. If a local rule conflicts with a global style, the local rule takes precedence.
+6. Only the "Quartermaster" identity is authorized to modify this file, other `.agent/` laws, and the `./opencode/agents/` roster.
+7. **Execute Changes**: Modification of project laws REQUIRES the explicit command: `Execute Changes`.
