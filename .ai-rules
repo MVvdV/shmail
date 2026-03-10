@@ -1,0 +1,4 @@
+# OpenAI CLI Discovery
+# This file acts as a system prompt pointer for OpenAI-based CLI tools.
+# Always read .agent/system.md before starting any session to understand the project's laws and state.
+System Prompt: .agent/system.md
