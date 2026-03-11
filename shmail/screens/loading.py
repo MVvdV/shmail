@@ -15,44 +15,33 @@ if TYPE_CHECKING:
 
 
 class LoadingScreen(Screen):
-    """A transitional screen for database and service initialization."""
+    """
+    [PRODUCTION GRADE]: Purely reactive status viewer.
+    Responsibility: Only displays the status of 'ShmailApp.status_message' and 'ShmailApp.status_progress'.
+    Constraint: Does NOT own or run the initialization task.
+    """
 
     @property
-    def shmail_app(self) -> ShmailApp:
+    def shmail_app(self) -> "ShmailApp":
         return cast("ShmailApp", self.app)
 
     def compose(self) -> ComposeResult:
         yield AppHeader()
         with Center():
             with Vertical(id="loading-container"):
-                yield Static("Initializing Shmail...", id="loading-status")
+                # Initial values pulled directly from ShmailApp.
+                yield Static(self.shmail_app.status_message, id="loading-status")
                 yield ProgressBar(total=100, id="loading-bar")
         yield AppFooter()
 
-    async def on_mount(self) -> None:
-        """Perform background initialization tasks with user feedback."""
-        bar = self.query_one("#loading-bar", ProgressBar)
-        status = self.query_one("#loading-status", Static)
+    # --- REACTIVE WATCHERS ---
 
-        try:
-            bar.update(progress=10)
-            status.update("Opening database...")
+    def watch_app_status_message(self, message: str) -> None:
+        """Called when app.status_message changes."""
+        self.query_one("#loading-status", Static).update(message)
 
-            self.shmail_app.db.initialize()
-
-            # Simulate work for UX
-            await asyncio.sleep(0.5)
-
-            bar.advance(40)
-            status.update("Loading labels and settings...")
-            await asyncio.sleep(0.3)
-
-            bar.update(progress=100)
-            status.update("Ready!")
-            await asyncio.sleep(0.2)
-
-            self.shmail_app.switch_screen(MainScreen())
-
-        except Exception as e:
-            status.update(f"Error: {e}")
-            pass
+    def watch_app_status_progress(self, progress: float) -> None:
+        """Called when app.status_progress changes."""
+        self.query_one("#loading-bar", ProgressBar).update(
+            progress=progress * 100
+        )  # Convert 0.0-1.0 to 0-100 for the ProgressBar

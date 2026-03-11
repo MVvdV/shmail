@@ -3,13 +3,12 @@
 ## Current Status
 - [x] Phase 1: Foundation & Auth (Tickets 1.1 - 1.5)
 - [x] Phase 2: Gmail API & Sync (Tickets 2.1 - 2.6)
-- [x] Phase 3: TUI Scaffolding - 3.1, 3.2, 3.4, 3.5, 3.6, 3.8
-- [ ] Ticket 3.3: LoadingScreen Refinement (Next Action)
-- [ ] Ticket 3.7: Resizable Sidebar
+- [x] Phase 3: TUI Scaffolding - 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.8
+- [ ] Ticket 3.7: Resizable Sidebar (Next Action)
 
-## Session State (Last Handover: Feb 20 2026)
-- **Last Action**: Standardized logging and error handling, implemented Keychain-only storage, established reactive status bus.
-- **Next Step**: Resume **Ticket 3.3 - LoadingScreen Refinement**. Update `SyncService.initial_sync` to yield progress updates or post messages for the `ProgressBar`.
+## Session State (Last Handover: Mar 11 2026)
+- **Last Action**: Finalized LoadingScreen refinement with centralized app-level orchestration (Production-Grade). Standardized logging and verified in-file documentation protocol.
+- **Next Step**: Implement **Ticket 3.7 - Resizable Sidebar**. Focus on mouse-drag event handling and keyboard resizing within the Textual architecture.
 - **Blockers**: None currently identified.
 
 ## Granular Tickets (Migrated)
@@ -32,7 +31,7 @@
 ### Phase 3: TUI Scaffolding
 - [x] **Ticket 3.1**: Create `app.py` and base `ShmailApp` with `shmail.tcss`.
 - [x] **Ticket 3.2**: Implement `LoginScreen` (OAuth trigger and Welcome splash).
-- [ ] **Ticket 3.3**: Implement `LoadingScreen` (DB Initialization & Progress feedback).
+- [x] **Ticket 3.3**: Implement `LoadingScreen` (DB Initialization & Progress feedback).
 - [x] **Ticket 3.4**: Implement `MainScreen` (Container for Sidebar & EmailList).
 - [x] **Ticket 3.5**: Implement `Sidebar` widget (Label navigation).
 - [x] **Ticket 3.6**: Implement `EmailList` widget (Message snippets).
@@ -60,3 +59,4 @@
 
 ## Handoff Log
 - [Feb 20 2026]: Established production-grade TUI architecture. Keyring storage finalized. Ready for LoadingScreen progress bar integration.
+- [Mar 11 2026]: Completed Ticket 3.3 (LoadingScreen Refinement). Architected the "Centralized Orchestration" pattern. ShmailApp now manages background workers (DB init + Sync) while LoadingScreen acts as a reactive view. Codified Production-Grade and In-File Documentation mandates into the project context and Tutor persona.

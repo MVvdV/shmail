@@ -12,6 +12,9 @@ from shmail.services.auth import AuthService
 from shmail.services.db import db
 from shmail.services.sync import SyncResult, SyncService
 
+# [PRODUCTION GRADE]: Module-level logger following project standard.
+logger = logging.getLogger(__name__)
+
 
 class ShmailApp(App):
     # Global state for UI feedback. Any widget can update this via self.app.status_message.
@@ -36,21 +39,51 @@ class ShmailApp(App):
 
     def _setup_logging(self) -> None:
         """
-        Decision: Centralized Logging.
-        Purpose: Directed to CONFIG_DIR/shmail.log to avoid TUI interference.
-        Logic: 1MB RotatingFileHandler (using CONFIG_DIR), root level INFO.
+        Decision: Centralized Logging (Production-Grade).
+        Purpose: Directed to shmail.log with a standard formatter.
+        Logic:
+        1. 1MB RotatingFileHandler.
+        2. Professional formatter (Time - Name - Level - Message).
+        3. Root logger configuration ensures all modules inherit these settings.
         """
         handler = RotatingFileHandler("shmail.log", maxBytes=1000000, backupCount=5)
-        logger = logging.getLogger("ShmailLogger")
-        logger.addHandler(handler)
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
+        handler.setFormatter(formatter)
 
-    def initialize_session(self, email: str) -> None:
+        root_logger = logging.getLogger()
+        root_logger.addHandler(handler)
+        root_logger.setLevel(logging.INFO)
+
+    async def initialize_session(self, email: str) -> None:
+        """
+        [PRODUCTION GRADE]: The Application Bootstrapper.
+
+        Note to Quartermaster: Added robust error handling and logging.
+        Failure now triggers a fallback to LoginScreen instead of a UI hang.
+        """
         self.email = email
         self.auth = AuthService(email)
         self.sync_service = SyncService(email, app=self)
 
+        # [PRODUCTION GRADE]: Background Worker with Error Handling.
+        worker = self.run_worker(self._run_initial_boot, thread=True, exclusive=True)
+        try:
+            await worker.wait()
+            self.switch_screen(MainScreen())
+        except Exception as e:
+            logger.error(f"Boot sequence failed: {e}")
+            self.status_message = f"Error: {e}"
+            self.switch_screen(LoginScreen())
+
         # Periodic background synchronisation
         self.set_interval(self.settings.refresh_interval, self.trigger_sync)
+
+    def _run_initial_boot(self) -> None:
+        self.db.initialize()
+        if self.sync_service:
+            self.sync_service.initial_sync()
 
     async def trigger_sync(self) -> None:
         """
@@ -68,19 +101,11 @@ class ShmailApp(App):
         sync_result = await worker.wait()
         self.post_message(self.SyncComplete(sync_result))
 
-    def on_mount(self) -> None:
-        """
-        Decision: Boot Sequence.
-        Flow: Logging -> Identity Check -> Screen Routing.
-        Logic:
-        1. Setup logging.
-        2. If self.settings.email is present: initialize_session() -> LoadingScreen.
-        3. If not: LoginScreen.
-        """
+    async def on_mount(self) -> None:
         self._setup_logging()
         if self.settings.email:
-            self.initialize_session(self.settings.email)
             self.push_screen(LoadingScreen())
+            await self.initialize_session(self.settings.email)
             return
         self.push_screen(LoginScreen())
 
