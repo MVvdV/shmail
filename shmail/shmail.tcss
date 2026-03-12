@@ -1,34 +1,285 @@
-/* Core Variables */
-$primary: #f82585;
-$secondary: #8c25f8;
-$background: #121212;
-$surface: #1e1e1e;
-$text: #eeeeee;
+/* --- Variables --- */
+$primary: #bb9af7;
+$secondary: #7aa2f7;
+$background: #1a1b26;
+$surface: #24283b;
+$text: #a9b1d6;
+$success: #9ece6a;
+$error: #f7768e;
 
+/* --- Base --- */
 Screen {
     background: $background;
     color: $text;
 }
+
+/* --- Layout: Header & Footer --- */
+AppHeader,
+AppFooter {
+    background: $surface;
+    color: $text;
+}
+
 AppHeader {
     dock: top;
-    height: 3;
-    layout: space-between;
+    height: 1;
 }
+
 AppFooter {
     dock: bottom;
-    layout: space-between;
+    height: 1;
 }
 
+#app-logo {
+    width: auto;
+    content-align: left middle;
+    padding: 0 2;
+    text-style: bold;
+    color: $primary;
+}
+
+#app-account,
+#app-status {
+    width: 1fr;
+    content-align: right middle;
+    padding: 0 2;
+}
+
+#app-version {
+    width: auto;
+    padding: 0 2;
+}
+
+/* --- Component: Sidebar --- */
 #sidebar {
-    width: 25%;
+    width: 30;
     height: 100%;
-    background: $surface;
-    border-right: tall $secondary;
-    padding: 1;
+    border-right: solid $secondary;
 }
 
-#message-list {
-    width: 75%;
+#sidebar-list {
+    background: transparent;
+    overflow-x: hidden;
+    scrollbar-size-vertical: 1;
+    scrollbar-color: $surface;
+    scrollbar-background: transparent;
+}
+
+LabelHeader {
+    height: 1;
+    border-top: solid $secondary;
+    border-title-align: left;
+    padding: 0 1;
+    margin-top: 1;
+}
+
+LabelItem {
+    layout: horizontal;
+    padding: 0 1;
+}
+
+.label-name {
+    width: 1fr;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    text-wrap: nowrap;
+}
+
+.label-count {
+    width: auto;
+    padding-left: 1;
+    color: $text 60%;
+}
+
+.label-count {
+    width: auto;
+    padding-left: 1;
+    color: $text 60%;
+}
+
+/* Sidebar States: Unread, Selection, Focus */
+LabelItem.unread .label-name,
+LabelItem.unread .label-count {
+    text-style: bold;
+}
+
+LabelItem.selected .label-name,
+LabelItem.selected .label-count {
+    color: $primary;
+    text-style: bold;
+}
+
+#sidebar ListView > ListItem.-highlight {
+    background: transparent;
+}
+
+#sidebar ListView:focus > ListItem.-highlight {
+    background: $surface;
+}
+
+#sidebar ListView:focus > ListItem.-highlight .label-name,
+#sidebar ListView:focus > ListItem.-highlight .label-count {
+    color: $primary;
+    text-style: bold;
+}
+
+/* --- Component: Email List --- */
+#email-list {
+    width: 1fr;
     height: 100%;
-    padding: 1;
+    background: transparent;
+    overflow-x: hidden;
+    scrollbar-size-vertical: 1;
+    scrollbar-color: $surface;
+    scrollbar-background: transparent;
+}
+
+.email-row-item {
+    width: 100%;
+    height: 4;
+    border-bottom: solid $surface;
+}
+
+.unread-indicator {
+    height: 100%;
+    width: 3;
+    content-align: center middle;
+    color: $primary;
+}
+
+.email-row-wrapper {
+    width: 1fr;
+    padding-right: 1;
+}
+
+.email-row-header {
+    height: 1;
+    width: 100%;
+}
+
+.email-sender {
+    width: auto;
+    max-width: 40%;
+    text-style: bold;
+    /*color: $primary;*/
+    text-overflow: ellipsis;
+    overflow: hidden;
+    text-wrap: nowrap;
+}
+
+.email-sender-address {
+    width: 1fr;
+    color: $text 40%;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    text-wrap: nowrap;
+    padding-left: 1;
+}
+
+.email-date {
+    width: auto;
+    color: $text 40%;
+    content-align: right middle;
+    padding-left: 1;
+}
+
+.email-subject {
+    height: 1;
+    color: $text;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    text-wrap: nowrap;
+}
+
+.email-snippet {
+    height: 1;
+    color: $text 60%;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    text-wrap: nowrap;
+}
+
+#email-list > ListItem.-highlight {
+    background: transparent;
+}
+
+#email-list:focus > ListItem.-highlight {
+    background: $surface;
+    color: $primary;
+    text-style: bold;
+}
+
+/* --- Component: Email Viewer --- */
+EmailViewer {
+    dock: right;
+    width: 100%;
+    height: 100%;
+    background: $background;
+}
+
+#viewer-header-container {
+    height: auto;
+    padding: 1 2;
+    background: $surface;
+    border-bottom: solid $secondary;
+}
+
+#viewer-subject {
+    text-style: bold;
+}
+
+#viewer-from,
+#viewer-to {
+    color: $text 60%;
+    text-style: italic;
+}
+
+#viewer-body-container {
+    padding: 2;
+}
+
+/* --- Markdown Rendering (Tokyo Night) --- */
+Markdown {
+    background: transparent;
+    color: $text;
+}
+
+Markdown > BlockQuote {
+    border-left: solid $secondary;
+    background: $surface;
+    margin: 1 0;
+    padding: 0 1;
+}
+
+Markdown > H1,
+Markdown > H2,
+Markdown > H3,
+Markdown > H4 {
+    color: $primary;
+    text-style: bold;
+    margin: 1 0;
+}
+
+Markdown > CodeBlock {
+    background: $surface;
+    color: $success;
+    margin: 1 0;
+}
+
+Markdown > Link {
+    color: $secondary;
+    text-style: underline;
+}
+
+Markdown > Strong {
+    text-style: bold;
+    color: $secondary;
+}
+
+Markdown > Emph {
+    text-style: italic;
+}
+
+Markdown > HorizontalRule {
+    color: #565f89;
 }

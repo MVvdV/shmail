@@ -7,14 +7,15 @@ if TYPE_CHECKING:
 
 
 class AppHeader(Horizontal):
-    """Custom production-grade header for Shmail."""
+    """The application header bar containing the logo and account information."""
 
     @property
-    def shmail_app(self) -> ShmailApp:
+    def shmail_app(self) -> "ShmailApp":
+        """Reference to the main application instance."""
         return cast("ShmailApp", self.app)
 
     def compose(self):
+        """Yields the logo and account display widgets."""
         yield Static("SHMAIL", id="app-logo")
-        # Access the email via our typed property
         email_text = getattr(self.shmail_app, "email", "") or "No Account"
         yield Static(email_text, id="app-account")

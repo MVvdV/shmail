@@ -9,7 +9,8 @@ wheels/
 # Virtual environments
 .venv
 
-# Project planning (not tracked in git)
+# Project
+.log
 
 # dot files
 .DS_Store

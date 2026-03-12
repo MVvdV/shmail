@@ -1,9 +1,8 @@
 import base64
-from datetime import datetime, timezone
+from datetime import timezone
 
 import pytest
 
-from shmail.models import Contact
 from shmail.services.parser import MessageParser
 
 
@@ -58,7 +57,8 @@ def test_parse_gmail_response_basic(raw_gmail_message):
     assert email.id == "msg123"
     assert email.thread_id == "thread123"
     assert email.subject == "Hello World"
-    assert email.sender == "Alice <alice@example.com>"
+    assert email.sender == "Alice"
+    assert email.sender_address == "alice@example.com"
     assert email.recipient_to == "Bob <bob@example.com>, Charlie <charlie@example.com>"
     assert email.recipient_cc == "Dana <dana@example.com>"
     assert email.body == "This is the body."

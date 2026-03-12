@@ -40,7 +40,7 @@ def test_db_service_transaction_logging(test_db, caplog):
         # or just raising a manual error.
 
         with pytest.raises(RuntimeError):
-            with test_db.transaction() as conn:
+            with test_db.transaction():
                 raise RuntimeError("Simulated DB Failure")
 
         # Assert the standard diagnostic message is present

@@ -1,29 +1,24 @@
-import base64
-import email.utils
 import logging
 from dataclasses import dataclass
-from datetime import datetime
-from email import message_from_bytes
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from googleapiclient.errors import HttpError
 
-from shmail.models import Email, GmailHistoryResponse, Label
+from shmail.models import GmailHistoryResponse
 from shmail.services.auth import AuthService
 from shmail.services.db import db
 from shmail.services.gmail import GmailService
 from shmail.services.parser import MessageParser
 
 if TYPE_CHECKING:
-    from shmail.app import ShmailApp
+    pass
 
-# Module-level logger following the project standard
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class SyncResult:
-    """Feedback on what changed during a sync cycle."""
+    """Summary of changes performed during a synchronization cycle."""
 
     added: int = 0
     removed: int = 0
@@ -31,71 +26,76 @@ class SyncResult:
 
     @property
     def any_changes(self) -> bool:
-        """Determines if anything actually happened during the sync."""
+        """Indicates whether any modifications occurred during the sync."""
         return any([self.added, self.removed, self.labels_changed])
 
 
 class SyncService:
-    def __init__(self, email: str, database=None, app: Optional["ShmailApp"] = None):
+    """Orchestrates synchronization between the local database and the Gmail API."""
+
+    def __init__(
+        self,
+        email: str,
+        database=None,
+        on_progress: Optional[Callable[[str, Optional[float]], None]] = None,
+    ):
         self.email = email
-        self.auth = AuthService(email)
-        self.gmail = GmailService(self.auth.get_credentials())
+        self.on_progress = on_progress
+        self.auth = AuthService(email, on_progress=on_progress)
         self.db = database or db
-        self.app = app
         self.parser = MessageParser()
+        self._gmail: Optional[GmailService] = None
+
+    @property
+    def gmail(self) -> GmailService:
+        """Lazily initializes the Gmail API wrapper, ensuring credential retrieval is non-blocking."""
+        if self._gmail is None:
+            creds = self.auth.get_credentials()
+            self._gmail = GmailService(creds)
+        return self._gmail
 
     def _update_status(self, message: str, progress: Optional[float] = None) -> None:
-        """
-        Internal bridge to the Global Progress Bus.
-        Updates the TUI status bar and the persistent diagnostic logs.
-        """
-        # Every user-facing status update is also a diagnostic log entry.
+        """Reports synchronization progress and logs status messages."""
         logger.info(message)
-        if self.app:
-            self.app.status_message = message
-            if progress is not None:
-                self.app.status_progress = progress
+        if self.on_progress:
+            self.on_progress(message, progress)
 
     def initial_sync(self):
-        """
-        Fetches the last 500 messages and syncs them to the local DB.
-        Decision: Progress is reported directly via self.app (Progress Bus).
-        """
+        """Fetches and stores the initial batch of labels and messages."""
         self._update_status("Syncing labels...", 0.05)
-
         self.sync_labels()
 
+        self._update_status("Connecting to Gmail API...", 0.08)
         self._update_status("Fetching message list...", 0.1)
         messages = self.gmail.list_messages()
         total = len(messages)
 
-        with self.db.transaction() as conn:
-            for i, m in enumerate(messages):
-                progress = 0.1 + ((i + 1) / total) * 0.85
-                self._update_status(f"Syncing email {i + 1} of {total}...", progress)
+        for i, m in enumerate(messages):
+            progress = 0.1 + ((i + 1) / total) * 0.85
+            self._update_status(f"Syncing email {i + 1} of {total}...", progress)
 
-                message_data = self.gmail.get_message(m["id"])
-                parsed = self.parser.parse_gmail_response(
-                    message_id=m["id"],
-                    thread_id=m["threadId"],
-                    message_data=message_data,
-                    label_ids=message_data.get("labelIds", []),
-                )
+            message_data = self.gmail.get_message(m["id"])
+            parsed = self.parser.parse_gmail_response(
+                message_id=m["id"],
+                thread_id=m["threadId"],
+                message_data=message_data,
+                label_ids=message_data.get("labelIds", []),
+            )
+
+            with self.db.transaction() as conn:
                 self.db.upsert_email(conn, parsed.email)
                 for contact in parsed.contacts:
                     self.db.upsert_contact(
                         conn, contact.email, contact.name, contact.timestamp.isoformat()
                     )
 
-            self._update_status("Initial sync complete.", 1.0)
-            profile = self.gmail.get_profile()
+        self._update_status("Initial sync complete.", 1.0)
+        profile = self.gmail.get_profile()
+        with self.db.transaction() as conn:
             self.db.set_metadata(conn, "history_id", profile["historyId"])
 
     def incremental_sync(self) -> SyncResult:
-        """
-        Synchronizes changes since the last sync.
-        Returns a SyncResult summary for the UI to react to.
-        """
+        """Synchronizes only the changes that occurred since the last successful sync."""
         self._update_status("Checking for changes...", 0.05)
         result = SyncResult()
         history_id = self.db.get_metadata("history_id")
@@ -103,7 +103,6 @@ class SyncService:
         if history_id is None:
             self._update_status("No history_id found. Performing initial sync.", 1.0)
             self.initial_sync()
-            # We return a dummy result with one change to trigger a UI refresh
             return SyncResult(added=1)
 
         self._update_status(f"Starting sync from history_id: {history_id}", 0.1)
@@ -123,10 +122,8 @@ class SyncService:
                     for record in data.history:
                         self._process_history_record(conn, record, result)
 
-                    # Update current history_id to the most recent one
                     self.db.set_metadata(conn, "history_id", data.historyId)
 
-                # Check if there's more data to fetch
                 page_token = data.nextPageToken
                 if not page_token:
                     break
@@ -146,14 +143,14 @@ class SyncService:
                 raise error
 
     def sync_labels(self):
-        # Fetches labels from Gmail and saves them to the DB.
+        """Updates the local label registry from the Gmail API."""
         labels = self.gmail.list_labels()
         with self.db.transaction() as conn:
             for label in labels:
                 self.db.upsert_label(conn, label["id"], label["name"], label["type"])
 
     def _process_history_record(self, conn, record, result: SyncResult):
-        # Processes individual history events (added, removed, deleted) within a transaction.
+        """Processes individual Gmail history events within a transaction."""
         for added in record.messagesAdded:
             result.added += 1
             try:
@@ -174,7 +171,7 @@ class SyncService:
                     )
             except HttpError as e:
                 if e.resp.status == 404:
-                    continue  # Message already gone
+                    continue
                 raise e
 
         for label_change in record.labelsAdded:

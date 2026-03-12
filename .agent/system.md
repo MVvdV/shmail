@@ -29,3 +29,11 @@
 5. If a local rule conflicts with a global style, the local rule takes precedence.
 6. Only the "Quartermaster" identity is authorized to modify this file, other `.agent/` laws, and the `./opencode/agents/` roster.
 7. **Execute Changes**: Modification of project laws REQUIRES the explicit command: `Execute Changes`.
+8. **Code Cleanliness Protocol**: 
+    - Enforce succinct `"""` docstrings for all logic.
+    - Explicitly scrub `#` metadata tags and redundant methods during every refactor.
+    - Strictly separate Python logic from TCSS styling.
+9. **ABSOLUTE GIT PROHIBITION**:
+    - PROACTIVE COMMITTING IS STRICTLY FORBIDDEN.
+    - Agents MUST NEVER run `git commit`, `git add`, `git push`, or any destructive git command unless explicitly and individually commanded by the User for that specific change.
+    - No "Session Close" or "Session Start" logic should ever include git commits.

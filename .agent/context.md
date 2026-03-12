@@ -1,7 +1,7 @@
 # Project Context (The Map)
 
 ## Tech Stack
-- **Language**: Python 3.13+
+- **Language**: Python 3.14+ (Leveraging PEP 649 for deferred annotations)
 - **TUI Framework**: Textual
 - **Dependency Manager**: `uv`
 - **Image Rendering**: `rich-pixels` + `Pillow`
@@ -19,7 +19,17 @@
 - **Reactive UI Flow**: UI Screens (e.g., `LoadingScreen`) and Widgets (e.g., `StatusBar`) are "dumb" reactive viewers. They do not trigger heavy logic but instead "watch" app-level reactive properties (`status_message`, `status_progress`).
 - **Non-Blocking I/O (Worker Pattern)**: All blocking operations (Gmail API, SQLite) MUST run in background threads using Textual's `run_worker(thread=True)`. The UI remains responsive by `await`-ing these workers without blocking the main event loop.
 - **Standardized Logging**: Every module defines a module-level logger (`logger = logging.getLogger(__name__)`). The Root logger is configured in `ShmailApp._setup_logging` with a rotating file handler and professional formatting to ensure consistent telemetry.
-- **Transactional Data Pipeline**: `SyncService` coordinates with `DatabaseService` using transactional contexts (`db.transaction()`) to ensure data integrity during Gmail syncs.
+- **Transactional Data Pipeline**: `SyncService` coordinates with `DatabaseService` using transactional contexts (`db.transaction()`). **CRITICAL**: Network I/O (Gmail API) MUST be performed outside of transactions to prevent database locking and UI thread starvation.
+- **Thread-Safe Reactive Bridge**: Updates to app-level reactive properties from background threads MUST use `app.call_from_thread()` to ensure the UI thread processes the signal and refreshes correctly.
+- **Explicit Watcher Pattern**: Screens should use explicit watchers (`self.watch(self.app, ..., init=True)`) to reliably synchronize local widget state with global application state across thread boundaries.
+- **Visual Focus Sovereignty**: In multi-pane layouts, the active pane MUST provide clear visual feedback (e.g., double borders via `:focus` styles) to indicate keyboard input targets.
+- **User-Centric Keybindings**: Bindings are defined in a Pydantic configuration model and persisted to `config.toml`, allowing users to override defaults while maintaining universal support for Vim (j/k) and standard (Arrows/Tab) keys.
+- **Code Cleanliness & Standards**:
+    - **Succinct Documentation**: All classes and methods MUST have professional `"""` docstrings. Conversational or trivial comments are discouraged.
+    - **Zero Metadata in Code**: No inline metadata tags (e.g., `[TODO]`, `[TICKET]`, `[PRODUCTION GRADE]`). Tracking belongs in documentation/roadmaps.
+    - **Pure Styling Layer**: All visual styling (colors, weights, borders) MUST live in TCSS. No format strings or markup in Python logic unless strictly required for data sanitization.
+    - **Redundancy Zero-Tolerance**: Always audit for and remove empty methods, duplicate logic, or clashing event handlers during refactoring.
+- **ABSOLUTE GIT RESTRICTION**: Proactive git management (committing, adding, pushing) is strictly forbidden. The User handles all version control. Agents must never attempt to create commits.
 - **Image Strategy**: "Pixels-to-characters" conversion using `rich-pixels` and half-block characters.
 - **HTML Rendering**: HTML to Markdown conversion via `html2text` for the reading layer.
 

@@ -6,18 +6,18 @@ from textual.app import App
 from textual.message import Message
 from textual.reactive import reactive
 
-from shmail.config import CONFIG_DIR, settings
+from shmail.config import settings
 from shmail.screens import LoadingScreen, LoginScreen, MainScreen
 from shmail.services.auth import AuthService
 from shmail.services.db import db
 from shmail.services.sync import SyncResult, SyncService
 
-# [PRODUCTION GRADE]: Module-level logger following project standard.
 logger = logging.getLogger(__name__)
 
 
 class ShmailApp(App):
-    # Global state for UI feedback. Any widget can update this via self.app.status_message.
+    """The main application class for Shmail."""
+
     status_message = reactive("Ready")
     status_progress = reactive(0.0)
 
@@ -38,14 +38,7 @@ class ShmailApp(App):
         self.settings = settings
 
     def _setup_logging(self) -> None:
-        """
-        Decision: Centralized Logging (Production-Grade).
-        Purpose: Directed to shmail.log with a standard formatter.
-        Logic:
-        1. 1MB RotatingFileHandler.
-        2. Professional formatter (Time - Name - Level - Message).
-        3. Root logger configuration ensures all modules inherit these settings.
-        """
+        """Configures rotating file logging for the application."""
         handler = RotatingFileHandler("shmail.log", maxBytes=1000000, backupCount=5)
         formatter = logging.Formatter(
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -57,17 +50,20 @@ class ShmailApp(App):
         root_logger.setLevel(logging.INFO)
 
     async def initialize_session(self, email: str) -> None:
-        """
-        [PRODUCTION GRADE]: The Application Bootstrapper.
-
-        Note to Quartermaster: Added robust error handling and logging.
-        Failure now triggers a fallback to LoginScreen instead of a UI hang.
-        """
+        """Initializes the user session, including services and background sync."""
         self.email = email
-        self.auth = AuthService(email)
-        self.sync_service = SyncService(email, app=self)
 
-        # [PRODUCTION GRADE]: Background Worker with Error Handling.
+        def update_progress(msg: str, progress: Optional[float]) -> None:
+            def _apply_update():
+                self.status_message = msg
+                if progress is not None:
+                    self.status_progress = progress
+
+            self.call_from_thread(_apply_update)
+
+        self.auth = AuthService(email, on_progress=update_progress)
+        self.sync_service = SyncService(email, on_progress=update_progress)
+
         worker = self.run_worker(self._run_initial_boot, thread=True, exclusive=True)
         try:
             await worker.wait()
@@ -77,22 +73,20 @@ class ShmailApp(App):
             self.status_message = f"Error: {e}"
             self.switch_screen(LoginScreen())
 
-        # Periodic background synchronisation
         self.set_interval(self.settings.refresh_interval, self.trigger_sync)
 
     def _run_initial_boot(self) -> None:
+        """Handles database initialization and initial synchronization."""
         self.db.initialize()
         if self.sync_service:
-            self.sync_service.initial_sync()
+            if not self.db.get_metadata("history_id"):
+                self.sync_service.initial_sync()
+            else:
+                self.status_message = "Restoring previous session..."
+                self.status_progress = 1.0
 
     async def trigger_sync(self) -> None:
-        """
-        Decision: Non-blocking Sync Heartbeat.
-        Responsibility:
-        1. Spawns a background thread worker for SyncService.incremental_sync.
-        2. Awaits the worker result (SyncResult).
-        3. Broadcasts results via self.post_message(self.SyncComplete(result)).
-        """
+        """Spawns a background worker to perform an incremental sync."""
         if not self.sync_service:
             return
         worker = self.run_worker(
@@ -102,12 +96,28 @@ class ShmailApp(App):
         self.post_message(self.SyncComplete(sync_result))
 
     async def on_mount(self) -> None:
+        """Application entry point for UI initialization."""
         self._setup_logging()
-        if self.settings.email:
-            self.push_screen(LoadingScreen())
-            await self.initialize_session(self.settings.email)
-            return
-        self.push_screen(LoginScreen())
+        self._apply_theme()
+        await self.push_screen(LoadingScreen())
+        self.run_worker(self._startup())
+
+    def _apply_theme(self) -> None:
+        """Applies the default visual theme."""
+        self.theme = "textual-dark"
+
+    async def _startup(self) -> None:
+        """Performs initial identity discovery and session bootstrapping."""
+        self.status_message = "Discovering active identity..."
+        email = AuthService().get_active_account()
+
+        if not email:
+            email = self.settings.email
+
+        if email:
+            await self.initialize_session(email)
+        else:
+            self.switch_screen(LoginScreen())
 
 
 if __name__ == "__main__":

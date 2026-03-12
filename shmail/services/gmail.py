@@ -2,23 +2,22 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import Resource, build
+from googleapiclient.discovery import build
 
-# Module-level logger following the project standard
 logger = logging.getLogger(__name__)
 
 
 class GmailService:
-    """Wrapper for the Google Gmail API."""
+    """A wrapper for the Google Gmail API providing high-level email operations."""
 
     def __init__(self, credentials: Credentials):
-        # The 'build' function creates a service object that lets us call Gmail API methods.
-        self.service: Resource = build("gmail", "v1", credentials=credentials)
+        """Initializes the Gmail API service using the provided credentials."""
+        self.service: Any = build("gmail", "v1", credentials=credentials)
 
     def list_messages(
         self, query: str = "", max_results: int = 500
     ) -> List[Dict[str, Any]]:
-        """Lists message summaries matching the query."""
+        """Retrieves a list of messages matching the specified query."""
         try:
             results = (
                 self.service.users()
@@ -32,7 +31,7 @@ class GmailService:
             raise
 
     def get_message(self, message_id: str, format: str = "raw") -> Dict[str, Any]:
-        """Gets a specific message by ID."""
+        """Fetches the full details of a specific message by its ID."""
         try:
             message = (
                 self.service.users()
@@ -46,7 +45,7 @@ class GmailService:
             raise
 
     def list_labels(self) -> List[Dict[str, Any]]:
-        """Lists all labels for the user."""
+        """Retrieves all Gmail labels associated with the user account."""
         try:
             results = self.service.users().labels().list(userId="me").execute()
             return results.get("labels", [])
@@ -55,7 +54,7 @@ class GmailService:
             raise
 
     def get_profile(self) -> Dict[str, Any]:
-        """Gets the user's Gmail profile (includes current historyId)."""
+        """Retrieves the user's Gmail profile information."""
         try:
             profile = self.service.users().getProfile(userId="me").execute()
             return profile
@@ -66,10 +65,7 @@ class GmailService:
     def list_history(
         self, start_history_id: str, page_token: Optional[str] = None
     ) -> Dict[str, Any]:
-        """
-        Lists history records since start_history_id.
-        Returns a dict containing 'history' (list of records) and 'historyId' (newest).
-        """
+        """Retrieves incremental history records since a specific history ID."""
         try:
             history_records = (
                 self.service.users()
@@ -85,7 +81,7 @@ class GmailService:
             raise
 
     def trash_message(self, message_id: str):
-        """Moves a message to the trash."""
+        """Moves the specified message to the trash."""
         try:
             self.service.users().messages().trash(userId="me", id=message_id).execute()
         except Exception:

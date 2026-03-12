@@ -1,5 +1,5 @@
 from datetime import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 from googleapiclient.errors import HttpError
@@ -23,8 +23,12 @@ def test_db(tmp_path):
 def sync_service(test_db):
     with patch("shmail.services.sync.AuthService"):
         service = SyncService("test@example.com", database=test_db)
-        service.gmail = MagicMock()
-        return service
+        # Use patch.object to mock the lazy property
+        with patch.object(
+            SyncService, "gmail", new_callable=PropertyMock
+        ) as mock_gmail:
+            mock_gmail.return_value = MagicMock()
+            yield service
 
 
 def test_incremental_sync_returns_result(sync_service, test_db):
