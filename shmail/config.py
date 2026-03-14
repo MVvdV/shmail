@@ -54,7 +54,7 @@ class Settings(BaseModel):
     refresh_interval: int = Field(
         default=300, description="Seconds between background synchronizations."
     )
-    max_emails_cached: int = Field(
+    max_messages_cached: int = Field(
         default=500,
         description="Maximum number of messages to store in the local cache.",
     )

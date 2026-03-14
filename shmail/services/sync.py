@@ -72,7 +72,7 @@ class SyncService:
 
         for i, m in enumerate(messages):
             progress = 0.1 + ((i + 1) / total) * 0.85
-            self._update_status(f"Syncing email {i + 1} of {total}...", progress)
+            self._update_status(f"Syncing message {i + 1} of {total}...", progress)
 
             message_data = self.gmail.get_message(m["id"])
             parsed = self.parser.parse_gmail_response(
@@ -83,7 +83,7 @@ class SyncService:
             )
 
             with self.db.transaction() as conn:
-                self.db.upsert_email(conn, parsed.email)
+                self.db.upsert_message(conn, parsed.message)
                 for contact in parsed.contacts:
                     self.db.upsert_contact(
                         conn, contact.email, contact.name, contact.timestamp.isoformat()
@@ -161,7 +161,7 @@ class SyncService:
                     message_data=message_data,
                     label_ids=added.message.labelIds,
                 )
-                self.db.upsert_email(conn, parsed.email)
+                self.db.upsert_message(conn, parsed.message)
                 for contact in parsed.contacts:
                     self.db.upsert_contact(
                         conn,
@@ -192,4 +192,4 @@ class SyncService:
             )
         for deleted in record.messagesDeleted:
             result.removed += 1
-            self.db.remove_email(conn, deleted.message.id)
+            self.db.remove_message(conn, deleted.message.id)

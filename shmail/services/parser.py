@@ -2,12 +2,15 @@ import base64
 import email.utils
 import html
 import logging
+import re
 from datetime import datetime, timezone
 from email import message_from_bytes
 from email.utils import getaddresses
 from typing import Any, Dict, List, Optional
 
-from shmail.models import Contact, Email, Label, ParsedMessage
+import html2text
+
+from shmail.models import Contact, Message, Label, ParsedMessage
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +38,6 @@ class MessageParser:
         sender_address = None
         if isinstance(sender, str):
             display_name, sender_address = email.utils.parseaddr(sender)
-            # If the parser found a display name, use it as the clean sender string.
-            # Otherwise, use the normalized raw string.
             sender = display_name if display_name else " ".join(sender.split())
 
         recipient_to = mime_msg.get("To")
@@ -76,7 +77,7 @@ class MessageParser:
         try:
             if date_str:
                 dt = email.utils.parsedate_to_datetime(date_str)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             dt = None
 
         if dt:
@@ -95,7 +96,7 @@ class MessageParser:
         contacts = MessageParser._extract_contacts(mime_msg, timestamp)
 
         return ParsedMessage(
-            email=Email(
+            message=Message(
                 id=message_id,
                 thread_id=thread_id,
                 subject=subject,
@@ -119,20 +120,66 @@ class MessageParser:
 
     @staticmethod
     def _extract_body(mime_msg) -> str:
-        """Extracts the plain text body from MIME parts."""
-        body = ""
+        """Extracts and converts the best available MIME part to Markdown."""
+        html_part = None
+        text_part = None
+
         if mime_msg.is_multipart():
             for part in mime_msg.walk():
-                if part.get_content_type() == "text/plain":
-                    payload = part.get_payload(decode=True)
-                    if payload:
-                        body = payload.decode(errors="replace")
-                    break
+                ctype = part.get_content_type()
+                if ctype == "text/html" and html_part is None:
+                    html_part = part
+                elif ctype == "text/plain" and text_part is None:
+                    text_part = part
         else:
-            payload = mime_msg.get_payload(decode=True)
+            ctype = mime_msg.get_content_type()
+            if ctype == "text/html":
+                html_part = mime_msg
+            elif ctype == "text/plain":
+                text_part = mime_msg
+
+        if html_part:
+            payload = html_part.get_payload(decode=True)
             if payload:
-                body = payload.decode(errors="replace")
-        return body
+                return MessageParser._to_markdown(
+                    payload.decode(errors="replace"), is_html=True
+                )
+
+        if text_part:
+            payload = text_part.get_payload(decode=True)
+            if payload:
+                return MessageParser._to_markdown(
+                    payload.decode(errors="replace"), is_html=False
+                )
+
+        return ""
+
+    @staticmethod
+    def _to_markdown(content: str, is_html: bool) -> str:
+        """Modular converter that transforms HTML or plain text into clean Markdown."""
+        if is_html:
+            h2t = html2text.HTML2Text()
+            h2t.body_width = 0
+            h2t.ignore_links = False
+            h2t.ignore_emphasis = False
+            h2t.ignore_images = True
+            h2t.protect_links = True
+            h2t.unicode_snob = True
+            h2t.wrap_links = False
+            h2t.inline_links = True
+            text = h2t.handle(content)
+            return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+        url_pattern = r"(https?://[^\s<>\"']+|www\.[^\s<>\"']+|[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"
+
+        def linkify(match):
+            val = match.group(0)
+            if "@" in val and "." in val:
+                return f"[{val}](mailto:{val})"
+            prefix = "https://" if val.startswith("www.") else ""
+            return f"[{val}]({prefix}{val})"
+
+        return re.sub(url_pattern, linkify, content)
 
     @staticmethod
     def _extract_contacts(mime_msg, timestamp: datetime) -> List[Contact]:

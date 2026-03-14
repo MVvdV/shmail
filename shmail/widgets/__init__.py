@@ -1,17 +1,18 @@
 from .sidebar import Sidebar, LabelItem
-from .email_list import EmailList, EmailRow
+from .email_list import ThreadList, ThreadRow
 from .status_bar import StatusBar
 from .header import AppHeader
 from .footer import AppFooter
-from .email_viewer import EmailViewer
+from .message_item import MessageItem, ThreadFooter
 
 __all__ = [
     "Sidebar",
     "LabelItem",
-    "EmailList",
-    "EmailRow",
+    "ThreadList",
+    "ThreadRow",
     "StatusBar",
     "AppHeader",
     "AppFooter",
-    "EmailViewer",
+    "MessageItem",
+    "ThreadFooter",
 ]

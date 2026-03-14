@@ -3,9 +3,9 @@ from datetime import datetime
 import pytest
 from textual.app import App
 from shmail.screens import MainScreen
-from shmail.widgets import Sidebar, EmailList, EmailRow, LabelItem
+from shmail.widgets import Sidebar, ThreadList, ThreadRow, LabelItem
 from shmail.services.db import DatabaseService
-from shmail.models import Email, Label
+from shmail.models import Message, Label
 
 
 @pytest.fixture
@@ -60,9 +60,9 @@ def test_sidebar_labels_load(test_db):
 
 
 def test_full_navigation_flow(test_db):
-    """Verifies that selecting a label in the sidebar correctly updates the email list."""
+    """Verifies that selecting a label in the sidebar correctly updates the conversation list."""
     work_label = Label(id="WORK", name="Work", type="user")
-    email1 = Email(
+    message1 = Message(
         id="e1",
         thread_id="t1",
         subject="Subject 1",
@@ -71,7 +71,7 @@ def test_full_navigation_flow(test_db):
         timestamp=datetime.now(),
         labels=[work_label],
     )
-    email2 = Email(
+    message2 = Message(
         id="e2",
         thread_id="t2",
         subject="Subject 2",
@@ -82,8 +82,8 @@ def test_full_navigation_flow(test_db):
     )
 
     with test_db.transaction() as conn:
-        test_db.upsert_email(conn, email1)
-        test_db.upsert_email(conn, email2)
+        test_db.upsert_message(conn, message1)
+        test_db.upsert_message(conn, message2)
 
     async def run_test():
         app = MockApp(test_db)
@@ -91,7 +91,7 @@ def test_full_navigation_flow(test_db):
             await pilot.pause()
 
             sidebar = app.screen.query_one("#sidebar", Sidebar)
-            email_list = app.screen.query_one("#email-list", EmailList)
+            thread_list = app.screen.query_one("#thread-list", ThreadList)
 
             work_item = find_node_by_data(sidebar, "WORK")
             assert work_item is not None
@@ -102,14 +102,14 @@ def test_full_navigation_flow(test_db):
 
             await pilot.pause()
 
-            rows = email_list.query(EmailRow)
+            rows = thread_list.query(ThreadRow)
             assert len(rows) == 2
 
     asyncio.run(run_test())
 
 
 def test_empty_state_feedback(test_db):
-    """Verifies that the UI displays a placeholder message when a label contains no emails."""
+    """Verifies that the UI displays a placeholder message when a label contains no messages."""
     with test_db.transaction() as conn:
         test_db.upsert_label(conn, "TRASH", "Trash", "system")
 
@@ -119,7 +119,7 @@ def test_empty_state_feedback(test_db):
             await pilot.pause()
 
             sidebar = app.screen.query_one("#sidebar", Sidebar)
-            email_list = app.screen.query_one("#email-list", EmailList)
+            thread_list = app.screen.query_one("#thread-list", ThreadList)
 
             trash_item = find_node_by_data(sidebar, "TRASH")
             assert trash_item is not None
@@ -132,7 +132,7 @@ def test_empty_state_feedback(test_db):
 
             from textual.widgets import Static
 
-            empty_msg = email_list.query_one("#empty-state-msg", Static)
-            assert "No emails found" in str(empty_msg.render_line(0))
+            empty_msg = thread_list.query_one("#empty-state-msg", Static)
+            assert "No conversations found" in str(empty_msg.render_line(0))
 
     asyncio.run(run_test())

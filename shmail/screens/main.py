@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, cast
 
-from shmail.widgets import AppFooter, AppHeader, EmailList, Sidebar, EmailViewer
+from shmail.widgets import AppFooter, AppHeader, ThreadList, Sidebar
+from .viewer import ThreadViewerScreen
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.screen import Screen
@@ -10,7 +11,7 @@ if TYPE_CHECKING:
 
 
 class MainScreen(Screen):
-    """The primary workspace for navigating labels and viewing emails."""
+    """The primary workspace for navigating labels and viewing conversation threads."""
 
     @property
     def shmail_app(self) -> "ShmailApp":
@@ -22,17 +23,29 @@ class MainScreen(Screen):
         yield AppHeader()
         with Horizontal():
             yield Sidebar(id="sidebar")
-            yield EmailList(id="email-list")
+            yield ThreadList(id="thread-list")
         yield AppFooter()
-        yield EmailViewer(id="email-viewer")
 
     def on_sidebar_label_selected(self, message: Sidebar.LabelSelected) -> None:
-        """Handles label selection events and updates the email list."""
-        email_list = self.query_one(EmailList)
-        email_list.load_label(message.label_id)
+        """Handles label selection events and updates the conversation list."""
+        thread_list = self.query_one(ThreadList)
+        thread_list.load_threads(message.label_id)
 
-    def on_email_list_email_selected(self, message: EmailList.EmailSelected) -> None:
-        """Handles email selection events and displays the content in the viewer."""
-        viewer = self.query_one(EmailViewer)
-        viewer.email_id = message.email_id
-        viewer.toggle_visibility(True)
+    def on_thread_list_thread_selected(
+        self, message: ThreadList.ThreadSelected
+    ) -> None:
+        """Handles conversation selection and displays the entire thread in a modal."""
+        self.app.push_screen(ThreadViewerScreen(message.thread_id))
+
+    def watch_focused(self, focused) -> None:
+        """Updates the footer shortcuts when the focused widget changes."""
+        footer = self.query_one(AppFooter)
+        if hasattr(focused, "get_shortcuts"):
+            footer.update_shortcuts(focused.get_shortcuts())
+        elif focused is not None:
+            parent = focused.parent
+            while parent is not None:
+                if hasattr(parent, "get_shortcuts"):
+                    footer.update_shortcuts(parent.get_shortcuts())
+                    break
+                parent = parent.parent

@@ -12,8 +12,8 @@ class Label(BaseModel):
     type: str
 
 
-class Email(BaseModel):
-    """Represents a single email message with its headers and content."""
+class Message(BaseModel):
+    """Represents a single message with its headers and content."""
 
     id: str
     thread_id: str
@@ -35,13 +35,13 @@ class Email(BaseModel):
 
 
 class Thread(BaseModel):
-    """Represents a collection of related email messages."""
+    """Represents a collection of related messages."""
 
     id: str
-    messages: List[Email] = Field(default_factory=list)
+    messages: List[Message] = Field(default_factory=list)
 
     @property
-    def latest_message(self) -> Optional[Email]:
+    def latest_message(self) -> Optional[Message]:
         """Returns the most recently received message in the thread."""
         if not self.messages:
             return None
@@ -57,9 +57,9 @@ class Contact(BaseModel):
 
 
 class ParsedMessage(BaseModel):
-    """Container for a parsed email and its discovered contacts."""
+    """Container for a parsed message and its discovered contacts."""
 
-    email: Email
+    message: Message
     contacts: List[Contact]
 
 

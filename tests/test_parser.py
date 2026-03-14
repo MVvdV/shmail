@@ -11,7 +11,6 @@ def raw_gmail_message():
     """
     A sample raw email structure as returned by the Gmail API.
     """
-    # Simple multipart MIME message
     mime_content = (
         "From: Alice <alice@example.com>\r\n"
         "To: Bob <bob@example.com>, Charlie <charlie@example.com>\r\n"
@@ -53,19 +52,21 @@ def test_parse_gmail_response_basic(raw_gmail_message):
         message_data=raw_gmail_message,
         label_ids=["INBOX", "UNREAD"],
     )
-    email = result.email
-    assert email.id == "msg123"
-    assert email.thread_id == "thread123"
-    assert email.subject == "Hello World"
-    assert email.sender == "Alice"
-    assert email.sender_address == "alice@example.com"
-    assert email.recipient_to == "Bob <bob@example.com>, Charlie <charlie@example.com>"
-    assert email.recipient_cc == "Dana <dana@example.com>"
-    assert email.body == "This is the body."
-    assert email.is_read is False  # UNREAD is in label_ids
-    assert email.has_attachments is True
-    assert len(email.labels) == 2
-    assert email.labels[0].id == "INBOX"
+    message = result.message
+    assert message.id == "msg123"
+    assert message.thread_id == "thread123"
+    assert message.subject == "Hello World"
+    assert message.sender == "Alice"
+    assert message.sender_address == "alice@example.com"
+    assert (
+        message.recipient_to == "Bob <bob@example.com>, Charlie <charlie@example.com>"
+    )
+    assert message.recipient_cc == "Dana <dana@example.com>"
+    assert message.body == "This is the body."
+    assert message.is_read is False
+    assert message.has_attachments is True
+    assert len(message.labels) == 2
+    assert message.labels[0].id == "INBOX"
 
 
 def test_extract_contacts_logic(raw_gmail_message):
@@ -78,17 +79,14 @@ def test_extract_contacts_logic(raw_gmail_message):
         message_data=raw_gmail_message,
         label_ids=["INBOX", "UNREAD"],
     )
-    # Check that we have 4 contacts
     assert len(result.contacts) == 4
 
-    # Check normalization and mapping
-    emails = [c.email for c in result.contacts]
-    assert "alice@example.com" in emails
-    assert "bob@example.com" in emails
-    assert "charlie@example.com" in emails
-    assert "dana@example.com" in emails
+    contact_emails = [c.email for c in result.contacts]
+    assert "alice@example.com" in contact_emails
+    assert "bob@example.com" in contact_emails
+    assert "charlie@example.com" in contact_emails
+    assert "dana@example.com" in contact_emails
 
-    # Check a specific contact's name and aware timestamp
     alice = next(c for c in result.contacts if c.email == "alice@example.com")
     assert alice.name == "Alice"
     assert alice.timestamp.tzinfo == timezone.utc
@@ -98,7 +96,6 @@ def test_timestamp_normalization():
     """
     Verify that offset-aware and naive dates are handled correctly.
     """
-    # 1. Aware date (EST -0500)
     data = {
         "raw": base64.urlsafe_b64encode(
             b"Date: Mon, 16 Feb 2026 10:00:00 -0500\r\n\r\n"
@@ -106,24 +103,21 @@ def test_timestamp_normalization():
         "internalDate": "0",
     }
     result = MessageParser.parse_gmail_response("id", "tid", data, [])
-    # 10:00 -0500 should be 15:00 UTC
-    assert result.email.timestamp.hour == 15
-    assert result.email.timestamp.tzinfo == timezone.utc
+    assert result.message.timestamp.hour == 15
+    assert result.message.timestamp.tzinfo == timezone.utc
 
-    # 2. Naive date (treated as UTC)
     data = {
         "raw": base64.urlsafe_b64encode(b"Date: 16 Feb 2026 10:00:00\r\n\r\n").decode(),
         "internalDate": "0",
     }
     result = MessageParser.parse_gmail_response("id", "tid", data, [])
-    assert result.email.timestamp.hour == 10
-    assert result.email.timestamp.tzinfo == timezone.utc
+    assert result.message.timestamp.hour == 10
+    assert result.message.timestamp.tzinfo == timezone.utc
 
-    # 3. Fallback to internalDate
     data = {
         "raw": base64.urlsafe_b64encode(b"Date: Invalid Date\r\n\r\n").decode(),
-        "internalDate": "1739700000000",  # Feb 16 2026 10:00:00 UTC
+        "internalDate": "1739700000000",
     }
     result = MessageParser.parse_gmail_response("id", "tid", data, [])
-    assert result.email.timestamp.hour == 10
-    assert result.email.timestamp.tzinfo == timezone.utc
+    assert result.message.timestamp.hour == 10
+    assert result.message.timestamp.tzinfo == timezone.utc

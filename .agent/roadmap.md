@@ -4,13 +4,12 @@
 - [x] Phase 1: Foundation & Auth (Tickets 1.1 - 1.5)
 - [x] Phase 2: Gmail API & Sync (Tickets 2.1 - 2.6)
 - [x] Phase 3: TUI Scaffolding (Tickets 3.1 - 3.9)
-- [x] Phase 4: Reading & Search (Ticket 4.1 complete)
-- [ ] Ticket 4.5: UI Styling Refinement (Next Action)
+- [x] Phase 4: Reading & Search (Tickets 4.1, 4.5 complete)
 
-## Session State (Last Handover: Mar 11 2026)
-- **Last Action**: Finalized Phase 3 and initiated Phase 4. Implemented Resizable Sidebar (Ticket 3.7) and EmailViewer (Ticket 4.1). Resolved critical async bottlenecks in the startup and sync sequence using thread-safe reactive bridges.
-- **Next Step**: Implement **Ticket 4.5 - UI Styling Refinement**. Focus on improving the visual hierarchy, padding, and border styles across the MainScreen and EmailViewer to achieve a more polished, production-grade look.
-- **Blockers**: None. Gmail Sync and TUI Navigation are fully operational.
+## Session State (Last Handover: Mar 14 2026)
+- **Last Action**: Implemented Conversation Threading and performed a full Semantic Refactor across the Database, Models, and UI layers. Stabilized the TUI navigation (`j/k`, `g/G`, Arrows) and established a modular HTML-to-Markdown parsing pipeline.
+- **Next Step**: Implement **Ticket 4.7 - Robust Keyboard Interaction for Markdown Elements** using the "Component-Based Deconstruction" strategy to finally resolve link focus/tabbing issues.
+- **Blockers**: None. Conversational UI and Sync are robust.
 
 ## Granular Tickets (Migrated)
 
@@ -41,11 +40,21 @@
 - [x] **Ticket 3.9**: Implement Advanced Navigation & Config-Driven Bindings (Arrows, Focus, Config).
 
 ### Phase 4: Reading & Search
-- [x] **Ticket 4.1**: Implement `EmailViewer` (Markdown rendering + Header display).
+- [x] **Ticket 4.1**: Implement Conversation Threading (Aggregated Inbox + Thread Viewer Stack).
 - [ ] **Ticket 4.2**: Implement `ImageWidget` (Rich Pixels pixels-to-characters).
 - [ ] **Ticket 4.3**: Implement `SearchService` (SQLite FTS5 + Gmail API fallback).
 - [ ] **Ticket 4.4**: Implement `SearchBar` widget (As-you-type local filtering).
-- [ ] **Ticket 4.5**: UI Styling & Aesthetics Refinement (Borders, Padding, and Hierarchy).
+- [x] **Ticket 4.5**: UI Styling & Aesthetics Refinement (Tokyo Night borders, centered indicators, dynamic footers).
+- [ ] **Ticket 4.6**: Implement Attachment Bar & Calendar Invite Cards (Standalone interactive widgets).
+- [ ] **Ticket 4.7**: Robust Keyboard Interaction for Markdown Elements.
+    - **Goal**: Enable precise keyboard focus and interaction for links/emails within the message body.
+    - **Previous Attempts (Lessons Learned)**:
+        - *Standard Markdown with `can_focus_children`*: Links are rendered as Rich segments, not focusable DOM widgets.
+        - *Stripped MarkdownViewer*: Extra UI overhead and internal scroll hijacking (when nested in another scrollable).
+        - *Virtual Cursor (Segment Tinting)*: Visually fragile and complex to synchronize with dynamic line wrapping.
+        - *Source Injection (`**link**`)*: Induced visual artifacts and inconsistent highlighting.
+        - *Link Picker Modal*: Functional but poor UX (detaches context from the reading flow).
+    - **Proposed Solution**: Component-Based Deconstruction. Parse Markdown tokens via `markdown-it-py` and yield a stack of native widgets (`Static` for text, `LinkComponent` for interactive URLs). This ensures native `Tab` support and 100% scroll stability.
 
 ### Phase 5: Composition & Offline
 - [ ] **Ticket 5.1**: Implement `ComposeScreen` (TextArea + Recipient inputs).
@@ -61,8 +70,10 @@
 - [ ] **Ticket 6.5**: Implement Graceful Logout & Session Reset (`shmail --logout`).
 - [ ] **Ticket 6.6**: Cursor & Mouse Interaction Support (Hover states, custom cursors).
 - [ ] **Ticket 6.7**: Semantic Versioning & Automated Build Pipeline.
+- [ ] **Ticket 6.8**: Professional Packaging & Installation (`pip install`, `uv tool`, `brew`).
 
 ## Handoff Log
 - [Feb 20 2026]: Established production-grade TUI architecture. Keyring storage finalized. Ready for LoadingScreen progress bar integration.
 - [Mar 11 2026]: Completed Ticket 3.3 (LoadingScreen Refinement). Architected the "Centralized Orchestration" pattern. ShmailApp now manages background workers (DB init + Sync) while LoadingScreen acts as a reactive view. Codified Production-Grade and In-File Documentation mandates into the project context and Tutor persona.
 - [Mar 11 2026 (Evening)]: Optimized Startup sequence with "Discovery-First" Keyring logic. Resolved frozen UI and redundant sync issues using thread-safe `call_from_thread` bridges. Finalized Phase 3 (Resizable Sidebar) and started Phase 4 (EmailViewer with Vim navigation). Upgraded project to Python 3.14.
+- [Mar 14 2026]: Completed Conversation Threading (Ticket 4.1). Implemented a Modal Screen architecture for the thread viewer with a scrollable stack of message cards. Performed a massive Semantic Refactor: "Email" is now for addresses, "Message" for items, and "Thread" for conversations. Established a modular HTML-to-Markdown parser using `html2text`. Stabilized TUI navigation and dynamic shortcut footers. Documented link-interaction blockers in Ticket 4.7.

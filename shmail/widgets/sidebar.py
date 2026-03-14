@@ -66,9 +66,20 @@ class Sidebar(Vertical):
     BINDINGS = [
         Binding("[", "shrink_sidebar", "Shrink Sidebar", show=False),
         Binding("]", "expand_sidebar", "Expand Sidebar", show=False),
-        Binding("k,up", "cursor_up", "Previous Label", show=False),
-        Binding("j,down", "cursor_down", "Next Label", show=False),
+        Binding("k,up", "action_cursor_up", "Previous Label", show=False),
+        Binding("j,down", "action_cursor_down", "Next Label", show=False),
+        Binding("g", "first_label", "First Label", show=False),
+        Binding("G", "last_label", "Last Label", show=False),
     ]
+
+    def get_shortcuts(self) -> list[tuple[str, str]]:
+        """Returns the active shortcuts for the Sidebar."""
+        return [
+            ("ENTER", "Select"),
+            ("J/K", "Move"),
+            ("G/g", "Top/End"),
+            ("[/]", "Resize"),
+        ]
 
     @property
     def shmail_app(self) -> "ShmailApp":
@@ -109,6 +120,16 @@ class Sidebar(Vertical):
     def action_cursor_down(self) -> None:
         """Moves the selection cursor down."""
         self.label_list.action_cursor_down()
+
+    def action_first_label(self) -> None:
+        """Jumps to the first label."""
+        if len(self.label_list) > 0:
+            self.label_list.index = 0
+
+    def action_last_label(self) -> None:
+        """Jumps to the last label."""
+        if len(self.label_list) > 0:
+            self.label_list.index = len(self.label_list) - 1
 
     def on_mount(self):
         """Populates labels from the database on mount."""
@@ -165,9 +186,11 @@ class Sidebar(Vertical):
         inbox_index = -1
         for key, disp in main_map.items():
             if key in found_main:
-                l = found_main[key]
+                label_info = found_main[key]
                 self.label_list.append(
-                    LabelItem(disp, l["id"], l["unread_count"], depth=1)
+                    LabelItem(
+                        disp, label_info["id"], label_info["unread_count"], depth=1
+                    )
                 )
                 if key == "INBOX":
                     inbox_index = len(self.label_list) - 1
@@ -176,18 +199,22 @@ class Sidebar(Vertical):
             self.label_list.append(LabelHeader("Categories"))
             for key, disp in cat_map.items():
                 if key in found_cats:
-                    l = found_cats[key]
+                    label_info = found_cats[key]
                     self.label_list.append(
-                        LabelItem(disp, l["id"], l["unread_count"], depth=1)
+                        LabelItem(
+                            disp, label_info["id"], label_info["unread_count"], depth=1
+                        )
                     )
 
         if found_more:
             self.label_list.append(LabelHeader("More"))
             for key, disp in more_map.items():
                 if key in found_more:
-                    l = found_more[key]
+                    label_info = found_more[key]
                     self.label_list.append(
-                        LabelItem(disp, l["id"], l["unread_count"], depth=1)
+                        LabelItem(
+                            disp, label_info["id"], label_info["unread_count"], depth=1
+                        )
                     )
 
         if user_labels:

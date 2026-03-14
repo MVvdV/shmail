@@ -8,6 +8,16 @@ $success: #9ece6a;
 $error: #f7768e;
 
 /* --- Base --- */
+* {
+    scrollbar-size: 1 1;
+    scrollbar-color: $surface;
+    scrollbar-color-hover: $primary;
+    scrollbar-color-active: $secondary;
+    scrollbar-background: transparent;
+    scrollbar-background-hover: transparent;
+    scrollbar-background-active: transparent;
+}
+
 Screen {
     background: $background;
     color: $text;
@@ -38,16 +48,41 @@ AppFooter {
     color: $primary;
 }
 
-#app-account,
-#app-status {
-    width: 1fr;
-    content-align: right middle;
-    padding: 0 2;
-}
-
 #app-version {
     width: auto;
     padding: 0 2;
+}
+
+#app-shortcuts,
+#thread-shortcuts {
+    width: 1fr;
+    height: 1;
+    layout: horizontal;
+    align: right middle;
+    padding: 0 2;
+}
+
+.shortcut-key,
+.shortcut-label,
+.shortcut-separator {
+    width: auto;
+}
+
+.shortcut-key {
+    color: $text;
+    text-style: bold;
+    padding-left: 1;
+}
+
+.shortcut-label {
+    color: $text 80%;
+    text-style: italic;
+    padding-left: 1;
+}
+
+.shortcut-separator {
+    color: $text 40%;
+    padding-left: 1;
 }
 
 /* --- Component: Sidebar --- */
@@ -60,9 +95,10 @@ AppFooter {
 #sidebar-list {
     background: transparent;
     overflow-x: hidden;
-    scrollbar-size-vertical: 1;
-    scrollbar-color: $surface;
-    scrollbar-background: transparent;
+}
+
+#sidebar-list:focus {
+    scrollbar-color: $primary;
 }
 
 LabelHeader {
@@ -91,13 +127,6 @@ LabelItem {
     color: $text 60%;
 }
 
-.label-count {
-    width: auto;
-    padding-left: 1;
-    color: $text 60%;
-}
-
-/* Sidebar States: Unread, Selection, Focus */
 LabelItem.unread .label-name,
 LabelItem.unread .label-count {
     text-style: bold;
@@ -123,51 +152,65 @@ LabelItem.selected .label-count {
     text-style: bold;
 }
 
-/* --- Component: Email List --- */
-#email-list {
+/* --- Component: Thread List --- */
+#thread-list {
     width: 1fr;
     height: 100%;
     background: transparent;
     overflow-x: hidden;
-    scrollbar-size-vertical: 1;
-    scrollbar-color: $surface;
-    scrollbar-background: transparent;
 }
 
-.email-row-item {
+#thread-list:focus {
+    scrollbar-color: $primary;
+}
+
+.thread-row-item {
     width: 100%;
     height: 4;
     border-bottom: solid $surface;
 }
 
-.unread-indicator {
-    height: 100%;
+.thread-indicators {
     width: 3;
+    height: 100%;
+    content-align: center middle;
+}
+
+.thread-count {
+    color: $text 40%;
+    text-style: bold;
+    height: 1;
+    width: 100%;
+    content-align: center middle;
+}
+
+.unread-indicator {
+    height: 1;
+    width: 100%;
     content-align: center middle;
     color: $primary;
 }
 
-.email-row-wrapper {
+.thread-row-wrapper {
     width: 1fr;
     padding-right: 1;
 }
 
-.email-row-header {
+.thread-row-header {
     height: 1;
     width: 100%;
 }
 
-.email-sender {
+.thread-sender {
     width: auto;
     max-width: 40%;
     text-style: bold;
-    /*color: $primary;*/
     text-overflow: ellipsis;
     overflow: hidden;
     text-wrap: nowrap;
 }
 
-.email-sender-address {
+.thread-sender-email {
     width: 1fr;
     color: $text 40%;
     text-overflow: ellipsis;
@@ -176,14 +219,14 @@ LabelItem.selected .label-count {
     padding-left: 1;
 }
 
-.email-date {
+.thread-date {
     width: auto;
     color: $text 40%;
     content-align: right middle;
     padding-left: 1;
 }
 
-.email-subject {
+.thread-subject {
     height: 1;
     color: $text;
     text-overflow: ellipsis;
@@ -191,7 +234,7 @@ LabelItem.selected .label-count {
     text-wrap: nowrap;
 }
 
-.email-snippet {
+.thread-snippet {
     height: 1;
     color: $text 60%;
     text-overflow: ellipsis;
@@ -199,43 +242,111 @@ LabelItem.selected .label-count {
     text-wrap: nowrap;
 }
 
-#email-list > ListItem.-highlight {
+#thread-list > ListItem.-highlight {
     background: transparent;
 }
 
-#email-list:focus > ListItem.-highlight {
+#thread-list:focus > ListItem.-highlight {
     background: $surface;
     color: $primary;
     text-style: bold;
 }
 
-/* --- Component: Email Viewer --- */
-EmailViewer {
-    dock: right;
+/* --- Component: Thread Viewer --- */
+ThreadViewerScreen {
+    align: center middle;
+    background: rgba(0, 0, 0, 0.5);
+}
+
+#thread-modal-container {
     width: 100%;
+    max-width: 96;
     height: 100%;
-    background: $background;
-}
-
-#viewer-header-container {
-    height: auto;
-    padding: 1 2;
+    margin: 2 4;
     background: $surface;
-    border-bottom: solid $secondary;
 }
 
-#viewer-subject {
+#thread-stack {
+    width: 100%;
+    height: 1fr;
+    padding: 1;
+    background: transparent;
+    overflow-x: hidden;
+}
+
+#thread-stack:focus-within {
+    scrollbar-color: $primary;
+}
+
+#thread-footer {
+    width: 100%;
+    height: 1;
+    background: $surface;
+    color: $text;
+}
+
+#thread-version {
+    width: auto;
+    padding: 0 2;
+}
+
+#thread-shortcuts {
+    width: 1fr;
+    content-align: right middle;
+    padding: 0 2;
+    text-style: italic;
+    color: $text 80%;
+}
+
+MessageItem {
+    width: 100%;
+    height: auto;
+    border: solid $surface;
+    background: $surface;
+    margin-bottom: 1;
+}
+
+MessageItem:focus {
+    border: solid $primary;
+}
+
+.message-header-container {
+    height: auto;
+    padding: 0 2;
+}
+
+.message-subject {
     text-style: bold;
+    color: $primary;
 }
 
-#viewer-from,
-#viewer-to {
+.message-from,
+.message-to {
     color: $text 60%;
     text-style: italic;
 }
 
-#viewer-body-container {
-    padding: 2;
+.message-date {
+    color: $text 40%;
+    content-align: right top;
+}
+
+.message-body-container {
+    height: auto;
+    padding: 1 2;
+    border-top: solid $background;
+    background: $background;
+}
+
+.message-markdown {
+    height: auto;
+}
+
+/* --- Selection Highlight --- */
+MarkdownLink:focus {
+    background: $primary;
+    color: $background;
+    text-style: bold;
 }
 
 /* --- Markdown Rendering (Tokyo Night) --- */
