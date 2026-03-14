@@ -1,4 +1,3 @@
-
 import pytest
 
 from shmail.services.db import DatabaseService
@@ -15,7 +14,6 @@ def test_db(tmp_path):
 
 def test_upsert_label(test_db):
     """Tests saving and updating a label."""
-    # 1. Insert a new label
     with test_db.transaction() as conn:
         test_db.upsert_label(conn, "INBOX", "Inbox", "SYSTEM")
 
@@ -25,7 +23,6 @@ def test_upsert_label(test_db):
     assert labels[0]["name"] == "Inbox"
     assert labels[0]["type"] == "SYSTEM"
 
-    # 2. Update existing label (name change)
     with test_db.transaction() as conn:
         test_db.upsert_label(conn, "INBOX", "Incoming", "SYSTEM")
     labels = test_db.get_labels()
@@ -42,21 +39,17 @@ def test_get_labels_ordering(test_db):
 
     labels = test_db.get_labels()
 
-    # SYSTEM should be first
     assert labels[0]["id"] == "INBOX"
-    # Then user labels alphabetically
     assert labels[1]["name"] == "A-Label"
     assert labels[2]["name"] == "Z-Label"
 
 
 def test_metadata_storage(test_db):
     """Test saving and retrieving metadata"""
-    # Insert a new history_id
     with test_db.transaction() as conn:
         test_db.set_metadata(conn, "last_history_id", "12345")
     assert test_db.get_metadata("last_history_id") == "12345"
 
-    # Overwrite an existing history_id
     with test_db.transaction() as conn:
         test_db.set_metadata(conn, "last_history_id", "67890")
     assert test_db.get_metadata("last_history_id") == "67890"

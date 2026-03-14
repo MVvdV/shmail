@@ -37,3 +37,7 @@
     - PROACTIVE COMMITTING IS STRICTLY FORBIDDEN.
     - Agents MUST NEVER run `git commit`, `git add`, `git push`, or any destructive git command unless explicitly and individually commanded by the User for that specific change.
     - No "Session Close" or "Session Start" logic should ever include git commits.
+10. **Roadmap Sovereignty**:
+    - NEVER delete historical data, completed tickets, or Handoff Log entries from `./roadmap.md`.
+    - Always preserve the full context of the project's evolution.
+    - Only add new entries or amend existing items if the implementation strategy has shifted significantly.

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Generator, List, Optional
 
 if TYPE_CHECKING:
-    from shmail.models import Email
+    from shmail.models import Message
 
 from shmail.config import CONFIG_DIR
 
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseService:
-    """Provides local SQLite persistence for emails, labels, and contacts."""
+    """Provides local SQLite persistence for messages, threads, labels, and contacts."""
 
     def __init__(self, db_path: Path = DB_PATH):
         self.db_path = db_path
@@ -49,7 +49,7 @@ class DatabaseService:
                 conn.execute("PRAGMA journal_mode=WAL")
 
                 conn.execute("""
-                    CREATE TABLE IF NOT EXISTS emails (
+                    CREATE TABLE IF NOT EXISTS messages (
                         id TEXT PRIMARY KEY,
                         thread_id TEXT,
                         subject TEXT,
@@ -78,11 +78,11 @@ class DatabaseService:
                 """)
 
                 conn.execute("""
-                    CREATE TABLE IF NOT EXISTS email_labels (
-                        email_id TEXT,
+                    CREATE TABLE IF NOT EXISTS message_labels (
+                        message_id TEXT,
                         label_id TEXT,
-                        PRIMARY KEY (email_id, label_id),
-                        FOREIGN KEY (email_id) REFERENCES emails (id) ON DELETE CASCADE,
+                        PRIMARY KEY (message_id, label_id),
+                        FOREIGN KEY (message_id) REFERENCES messages (id) ON DELETE CASCADE,
                         FOREIGN KEY (label_id) REFERENCES labels (id) ON DELETE CASCADE
                     )
                 """)
@@ -115,34 +115,65 @@ class DatabaseService:
             ).fetchone()
             return row["value"] if row else None
 
-    def get_email(self, email_id: str) -> Optional[dict]:
-        """Returns a single email by its ID, joined with contact names."""
+    def get_message(self, message_id: str) -> Optional[dict]:
+        """Returns a single message by its ID, joined with contact names."""
         with self.get_connection() as conn:
             row = conn.execute(
                 """
-                SELECT e.*, c_sender.name as sender_name
-                FROM emails e
-                LEFT JOIN contacts c_sender ON e.sender_address = c_sender.email
-                WHERE e.id = ?
+                SELECT m.*, c_sender.name as sender_name
+                FROM messages m
+                LEFT JOIN contacts c_sender ON m.sender_address = c_sender.email
+                WHERE m.id = ?
                 """,
-                (email_id,),
+                (message_id,),
             ).fetchone()
             return dict(row) if row else None
 
-    def get_emails(self, label_id: str, limit: int = 50, offset: int = 0) -> List[dict]:
-        """Returns emails for a specific label, joined with contact names, ordered by recency."""
+    def get_threads(
+        self, label_id: str, limit: int = 50, offset: int = 0
+    ) -> List[dict]:
+        """Returns the latest message for each thread in a label, including message counts."""
         with self.get_connection() as conn:
             cursor = conn.execute(
                 """
-                SELECT e.*, COALESCE(NULLIF(c.name, ''), e.sender) as sender_display
-                FROM emails e
-                JOIN email_labels el ON e.id = el.email_id
-                LEFT JOIN contacts c ON e.sender_address = c.email
-                WHERE el.label_id = ?
-                ORDER BY e.timestamp DESC
+                WITH LatestMessages AS (
+                    SELECT 
+                        m.*,
+                        COALESCE(NULLIF(c.name, ''), m.sender) as sender_display,
+                        ROW_NUMBER() OVER (PARTITION BY m.thread_id ORDER BY m.timestamp DESC) as rank
+                    FROM messages m
+                    JOIN message_labels ml ON m.id = ml.message_id
+                    LEFT JOIN contacts c ON m.sender_address = c.email
+                    WHERE ml.label_id = ?
+                ),
+                ThreadCounts AS (
+                    SELECT thread_id, COUNT(*) as thread_count
+                    FROM messages
+                    GROUP BY thread_id
+                )
+                SELECT lm.*, tc.thread_count
+                FROM LatestMessages lm
+                JOIN ThreadCounts tc ON lm.thread_id = tc.thread_id
+                WHERE lm.rank = 1
+                ORDER BY lm.timestamp DESC
                 LIMIT ? OFFSET ?
                 """,
                 (label_id, limit, offset),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_thread_messages(self, thread_id: str) -> List[dict]:
+        """Retrieves all messages for a specific conversation, ordered by recency (latest first)."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT m.*, c_sender.name as sender_name
+                FROM messages m
+                LEFT JOIN contacts c_sender ON m.sender_address = c_sender.email
+                WHERE m.thread_id = ?
+                ORDER BY m.timestamp DESC
+                """,
+                (thread_id,),
             )
             return [dict(row) for row in cursor.fetchall()]
 
@@ -155,14 +186,14 @@ class DatabaseService:
             return [dict(row) for row in cursor.fetchall()]
 
     def get_labels_with_counts(self) -> List[dict]:
-        """Returns labels along with their unread email counts."""
+        """Returns labels along with their unread message counts."""
         with self.get_connection() as conn:
             cursor = conn.execute(
                 """
-                SELECT l.id, l.name, l.type, COUNT(e.id) as unread_count
+                SELECT l.id, l.name, l.type, COUNT(m.id) as unread_count
                 FROM labels l
-                LEFT JOIN email_labels el ON l.id = el.label_id
-                LEFT JOIN emails e ON el.email_id = e.id AND e.is_read = 0
+                LEFT JOIN message_labels ml ON l.id = ml.label_id
+                LEFT JOIN messages m ON ml.message_id = m.id AND m.is_read = 0
                 GROUP BY l.id
                 ORDER BY l.type ASC, l.name ASC
                 """
@@ -185,42 +216,42 @@ class DatabaseService:
             (key, value),
         )
 
-    def upsert_email(self, conn: sqlite3.Connection, email: "Email"):
-        """Inserts or updates an email record in the database."""
+    def upsert_message(self, conn: sqlite3.Connection, message: "Message"):
+        """Inserts or updates a message record in the database."""
         conn.execute(
             """
-            INSERT OR REPLACE INTO emails
+            INSERT OR REPLACE INTO messages
             (id, thread_id, subject, sender, sender_address, recipient_to, recipient_to_addresses, recipient_cc, recipient_cc_addresses, recipient_bcc, recipient_bcc_addresses, snippet, body, timestamp, is_read, has_attachments)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                email.id,
-                email.thread_id,
-                email.subject,
-                email.sender,
-                email.sender_address,
-                email.recipient_to,
-                email.recipient_to_addresses,
-                email.recipient_cc,
-                email.recipient_cc_addresses,
-                email.recipient_bcc,
-                email.recipient_bcc_addresses,
-                email.snippet,
-                email.body,
-                email.timestamp.isoformat(),
-                int(email.is_read),
-                int(email.has_attachments),
+                message.id,
+                message.thread_id,
+                message.subject,
+                message.sender,
+                message.sender_address,
+                message.recipient_to,
+                message.recipient_to_addresses,
+                message.recipient_cc,
+                message.recipient_cc_addresses,
+                message.recipient_bcc,
+                message.recipient_bcc_addresses,
+                message.snippet,
+                message.body,
+                message.timestamp.isoformat(),
+                int(message.is_read),
+                int(message.has_attachments),
             ),
         )
 
-        for label in email.labels:
+        for label in message.labels:
             conn.execute(
                 "INSERT OR IGNORE INTO labels (id, name, type) VALUES (?, ?, ?)",
                 (label.id, label.name, label.type),
             )
             conn.execute(
-                "INSERT OR IGNORE INTO email_labels (email_id, label_id) VALUES (?, ?)",
-                (email.id, label.id),
+                "INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES (?, ?)",
+                (message.id, label.id),
             )
 
     def upsert_contact(
@@ -242,29 +273,27 @@ class DatabaseService:
     def update_labels(
         self,
         conn: sqlite3.Connection,
-        email_id: str,
+        message_id: str,
         added_label_ids: List[str],
         removed_label_ids: List[str],
     ):
-        """Updates the association between an email and its labels."""
+        """Updates the association between a message and its labels."""
         added = added_label_ids or []
         removed = removed_label_ids or []
 
         if removed:
             placeholders = ", ".join(["?"] * len(removed))
-            delete_sql = f"DELETE FROM email_labels WHERE email_id = ? AND label_id IN ({placeholders})"
-            conn.execute(delete_sql, [email_id] + removed)
+            delete_sql = f"DELETE FROM message_labels WHERE message_id = ? AND label_id IN ({placeholders})"
+            conn.execute(delete_sql, [message_id] + removed)
 
         if added:
-            insert_sql = (
-                "INSERT OR IGNORE INTO email_labels (email_id, label_id) VALUES (?, ?)"
-            )
-            insert_params = [(email_id, label_id) for label_id in added]
+            insert_sql = "INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES (?, ?)"
+            insert_params = [(message_id, label_id) for label_id in added]
             conn.executemany(insert_sql, insert_params)
 
-    def remove_email(self, conn: sqlite3.Connection, email_id: str):
-        """Deletes an email and its label associations from the database."""
-        conn.execute("DELETE FROM emails WHERE id = ?", (email_id,))
+    def remove_message(self, conn: sqlite3.Connection, message_id: str):
+        """Deletes a message and its label associations from the database."""
+        conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
 
     def upsert_label(
         self, conn: sqlite3.Connection, label_id: str, label_name: str, label_type: str
