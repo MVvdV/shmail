@@ -5,9 +5,10 @@
 - **Goal**: Build a high-performance, keyboard-driven terminal Gmail client with collaborative learning at its core.
 - **Context**: Refer to `./context.md` for tech stack and architecture.
 
-## Active Identity (The Brain)
-- **Current Persona**: ./roles/tutor.md
-- **Instructions**: Always follow the pointer in the role file to resolve the "Tutor" global identity and strictly adhere to the Cooperative Learning mandates.
+## Active Primaries
+- **Primary Agents**: OpenCode built-in `plan`, built-in `build`, and custom `tutor`.
+- **Current Persona**: `./roles/tutor.md`
+- **Routing Rule**: Use `/` workflows for repeatable operations and `@` subagents for focused analysis.
 
 ## Active Rules (The Law)
 - **Global Security**: Inherits from `./security.md`
@@ -16,28 +17,39 @@
   - ./rules/keyring.md
   - ./rules/python.md
 
+## Framework Registry
+- **Workflow Commands**: `../.opencode/commands/`
+- **Subagents**: `../.opencode/agents/` (`mode: subagent` only)
+- **Catalogs**:
+  - `./catalog/workflows.md`
+  - `./catalog/subagents.md`
+- **Contracts**:
+  - `./contracts/migration-integrity.md`
+  - `./contracts/interaction-standard.md`
+
 ## Conflict Resolution Protocol
-1. **Cooperative Learning Mandates**: These take precedence over standard developer speed or efficiency.
-2. **Local Overrides**: Rules in `./roles/` and `./rules/` always supersede their global parents.
-3. **Project Memory**: `./roadmap.md` is the final authority on task state.
+1. **Cooperative Learning Mandates**: These take precedence over speed-oriented implementation.
+2. **Contract First**: Migration integrity and interaction standard govern workflow behavior.
+3. **Local Overrides**: Rules in `./roles/` and `./rules/` supersede global parents.
+4. **Project Memory**: `./roadmap.md` is the final authority on task state.
 
 ## Operating Laws
-1. **The Entry Protocol**: Every session must begin with the "Quartermaster: Session Start" command (or by selecting an agent via the OpenCode `Tab` switcher).
-2. **The Team Roster**: Active agents are defined in `./opencode/agents/`. Selecting an agent via `Tab` instantly loads their persona and project context.
-3. Follow the pointers in active files to inherit global context from `~/.agent/`.
-4. Update `./roadmap.md` after every successful implementation.
-5. If a local rule conflicts with a global style, the local rule takes precedence.
-6. Only the "Quartermaster" identity is authorized to modify this file, other `.agent/` laws, and the `./opencode/agents/` roster.
-7. **Execute Changes**: Modification of project laws REQUIRES the explicit command: `Execute Changes`.
-8. **Code Cleanliness Protocol**: 
-    - Enforce succinct `"""` docstrings for all logic.
-    - Explicitly scrub `#` metadata tags and redundant methods during every refactor.
-    - Strictly separate Python logic from TCSS styling.
+1. **Session Discipline**: Sessions start with `/start-session` and end with `/close-session`.
+2. **Discoverability**: `/list-framework` must show active workflows/subagents with examples.
+3. **Upgrade Discipline**: `/upgrade-framework` supports `project | global` target scope.
+4. **Governance Gate**: Changes to `.agent/`, `.opencode/agents/`, or `.opencode/commands/` require `/execute-changes`.
+5. **Confirmation Rule**: Tier 2 operations require explicit token `CONFIRM EXECUTE CHANGES`.
+6. Follow pointers in active files to inherit global context from `~/.agent/`.
+7. If a local rule conflicts with a global style, the local rule takes precedence.
+8. **Code Cleanliness Protocol**:
+   - Enforce succinct `"""` docstrings for all logic.
+   - Scrub `#` metadata tags and redundant methods during refactor.
+   - Strictly separate Python logic from TCSS styling.
 9. **ABSOLUTE GIT PROHIBITION**:
-    - PROACTIVE COMMITTING IS STRICTLY FORBIDDEN.
-    - Agents MUST NEVER run `git commit`, `git add`, `git push`, or any destructive git command unless explicitly and individually commanded by the User for that specific change.
-    - No "Session Close" or "Session Start" logic should ever include git commits.
+   - Proactive committing is forbidden.
+   - Agents must never run `git commit`, `git add`, `git push`, or destructive git commands unless explicitly directed by the user for the specific change.
+   - `/start-session` and `/close-session` must never include git commits.
 10. **Roadmap Sovereignty**:
-    - NEVER delete historical data, completed tickets, or Handoff Log entries from `./roadmap.md`.
-    - Always preserve the full context of the project's evolution.
-    - Only add new entries or amend existing items if the implementation strategy has shifted significantly.
+   - Never delete historical data, completed tickets, or handoff entries from `./roadmap.md`.
+   - Always preserve full project evolution context.
+   - Only add new entries or amend existing items when implementation strategy changes materially.
