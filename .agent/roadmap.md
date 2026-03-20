@@ -4,11 +4,11 @@
 - [x] Phase 1: Foundation & Auth (Tickets 1.1 - 1.5)
 - [x] Phase 2: Gmail API & Sync (Tickets 2.1 - 2.6)
 - [x] Phase 3: TUI Scaffolding (Tickets 3.1 - 3.9)
-- [x] Phase 4: Reading & Search (Tickets 4.1, 4.5, 4.7 complete)
+- [x] Phase 4: Reading & Search (Tickets 4.1, 4.5, 4.7, 4.8, 4.9 complete)
 
-## Session State (Last Handover: Mar 19 2026)
-- **Last Action**: Corrected stale handoff state that referenced a deprecated structural-renderer execution target (`Ticket 4.10`).
-- **Next Step**: Continue the current production viewer path: keep Markdown-based message rendering, preserve persisted `body_links` as the deterministic interaction index, and focus on incremental polish plus regression coverage.
+## Session State (Last Handover: Mar 20 2026)
+- **Last Action**: Completed parser/viewer parity refinements (shared markdown parser contract, no link collapsing, active-link in-body marker, accordion thread behavior, and active-link scroll sync for long messages).
+- **Next Step**: Run real-inbox regression validation on long transactional threads and decide whether to add optional symbol mapping for image-link labels (parked idea) as a standalone UX enhancement ticket.
 - **Blockers**: None.
 
 ## Granular Tickets (Migrated)
@@ -100,26 +100,26 @@
         - After external open returns, no auto-focus reassignment is performed; user remains in control.
     - **Cleanup Requirement**:
         - Remove legacy internal-link focus hacks and deprecated renderer experiments to avoid conflicting interaction behavior.
-- [ ] **Ticket 4.8**: Rendering Quality & Artifact Reduction.
+- [x] **Ticket 4.8**: Rendering Quality & Artifact Reduction.
     - **Goal**: Improve visual readability of converted message bodies while preserving deterministic keyboard interaction behavior.
     - **Scope**:
-        - Refine HTML-to-Markdown conversion heuristics for transactional/layout-heavy emails.
-        - Reduce noisy artifacts (table separators, spacing anomalies, redundant wrappers) without harming legitimate content.
-        - Preserve link labels/order and keep `body_links` index aligned with displayed content.
+        - Standardize HTML conversion on `inscriptis` for transactional/layout-heavy emails.
+        - Remove remaining parser-era artifact heuristics that are no longer needed under `inscriptis` output.
+        - Keep rendered body text directly consumable by the Markdown viewer widget without extra transformation layers.
     - **Acceptance Criteria**:
         - Representative fixtures render with improved readability and reduced noise.
         - No regressions in the keyboard contract (`Tab/f`, `Shift+Tab/F`, `j/k`, `Enter`).
-        - Link selection order remains deterministic and consistent with persisted `body_links`.
-- [ ] **Ticket 4.9**: Body Metadata Canonicalization & Legacy Cleanup.
+        - Link selection order remains deterministic and consistent with persisted `body_links` derived from rendered body text.
+- [x] **Ticket 4.9**: Body Metadata Canonicalization & Legacy Cleanup.
     - **Goal**: Stabilize the persisted message-body metadata model and remove obsolete paths from prior experiments.
     - **Scope**:
-        - Treat `body`, `body_links`, and parse metadata fields as the canonical viewer payload.
-        - Remove stale references to deprecated structural-renderer/runtime-document approaches.
-        - Ensure parser, DB schema, and viewer read/write paths remain aligned.
+        - Treat rendered `body`, rendered-body-derived `body_links`, and parse metadata fields as the canonical viewer payload.
+        - Remove split link extraction paths that diverge from rendered body output.
+        - Ensure parser, DB schema, and viewer read/write paths remain aligned with one interaction contract.
     - **Acceptance Criteria**:
         - No runtime references to deprecated body payload models.
         - Metadata fields are consistently populated and consumed.
-        - Tests cover schema compatibility and metadata behavior.
+        - Tests cover schema compatibility, canonical link extraction, and mouse/keyboard parity.
 - [ ] **Ticket 4.10**: Archived Direction — HTML Structural Renderer.
     - **Status Note (Mar 19 2026)**: Archived/superseded by the current rendering and interaction architecture. Re-open only with explicit product direction change.
     - **Archive Rationale**:
@@ -162,9 +162,13 @@
         - Preserve draft/reply/forward behavior through a protocol-neutral compose model.
 
 ## Implementation Notes (Locked Decisions)
-- Viewer runtime path uses Markdown display text for rendering and persisted `messages.body_links` as a separate deterministic interaction index.
+- Viewer runtime path uses Markdown display text for rendering and persisted `messages.body_links` derived from the rendered body as the deterministic interaction index.
 - Keyboard contract remains locked: `Tab/f` forward traversal, `Shift+Tab/F` reverse traversal, `j/k` card-level traversal, `Enter` activates selected link.
 - Link UX is explicit and safe: disallowed schemes remain visible/selectable, display `[blocked]` status, and produce a user-facing warning on activation attempt.
+- Canonical interaction links preserve markdown token order and duplicates; collapsing links by label/href is disabled to match actual interactive token behavior.
+- Message-body visibility is CSS-driven (`MessageItem.-expanded`) and thread navigation enforces strict accordion behavior (one expanded message at a time).
+- Active-link visibility in long content uses persisted `line_start` metadata mapped against rendered markdown block `source_range` for scroll-into-view synchronization.
+- Active keyboard link selection is rendered in-body via parser token injection using `【↗ label 】` inside the active link token.
 
 ### Phase 6: Polish & Distribution
 - [ ] **Ticket 6.1**: Implement `ThemingEngine`.
@@ -185,3 +189,12 @@
 - [Mar 19 2026]: Locked Ticket 4.7 keyboard interaction contract for robust mouse-free navigation: `Tab/f` forward traversal, `Shift+Tab/F` reverse traversal, `j/k` card-level override, and `Enter` link activation with no focus-state mutation on return.
 - [Mar 19 2026 (Session Close)]: Closed session with roadmap sync; reaffirmed Ticket 4.10 as the active execution target, specifically HTML-first semantic block rendering with guarded plain-text fallback.
 - [Mar 19 2026 (Correction)]: Session-close handoff entry above was stale. Active direction is implemented Markdown display rendering with persisted `body_links` interaction indexing. Ticket 4.10 is archived unless explicitly re-opened.
+- [Mar 20 2026]: Replaced HTML conversion dependency with `inscriptis` and removed HTML-anchor merge fallback from runtime parsing. Canonical `body_links` now derive from rendered body content and drive both keyboard traversal and guarded mouse activation.
+- [Mar 20 2026]: Simplified parser pipeline by removing regex-based URL/email extraction and legacy plain/html split-link paths. Canonical links are extracted from rendered body markdown tokens (`markdown-it` GFM + linkify) to keep mouse and keyboard interaction parity.
+- [Mar 20 2026]: Hardened application/runtime orchestration: sidebar and thread list DB reads now run via workers, bootstrap status restoration is applied through thread-safe UI updates, periodic sync scheduling is gated to successful session initialization, and sync error handling is surfaced through status updates.
+- [Mar 20 2026]: Improved sync/data hygiene by pruning stale labels during label refresh and correcting incremental `added` metrics to count only successfully fetched+parsed messages.
+- [Mar 20 2026 (Session Close)]: Session workflow executed. Roadmap session state refreshed and next execution target fixed on `Ticket 4.8` regression validation (rendering quality + keyboard/link contract stability).
+- [Mar 20 2026]: Removed canonical link collapsing and aligned extraction/rendering on one shared markdown parser contract (`gfm-like`), including kind metadata for lightweight link-type hints.
+- [Mar 20 2026]: Added active-link visual marker injection (`【↗ label 】`) inside link tokens and kept mouse/keyboard interaction parity against persisted canonical links.
+- [Mar 20 2026]: Implemented strict accordion thread behavior with CSS-driven collapsed state defaults and Textual lifecycle-safe initial thread mount/show reconciliation.
+- [Mar 20 2026]: Added active-link scroll synchronization for long messages using persisted `line_start` metadata and markdown block `source_range` matching.

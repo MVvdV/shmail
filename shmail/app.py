@@ -36,16 +36,23 @@ class ShmailApp(App):
         self.auth = None
         self.sync_service: Optional[SyncService] = None
         self.settings = settings
+        self._sync_timer = None
 
     def _setup_logging(self) -> None:
         """Configures rotating file logging for the application."""
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers:
+            if isinstance(handler, RotatingFileHandler) and str(
+                getattr(handler, "baseFilename", "")
+            ).endswith("shmail.log"):
+                return
+
         handler = RotatingFileHandler("shmail.log", maxBytes=1000000, backupCount=5)
         formatter = logging.Formatter(
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         )
         handler.setFormatter(formatter)
 
-        root_logger = logging.getLogger()
         root_logger.addHandler(handler)
         root_logger.setLevel(logging.INFO)
 
@@ -68,12 +75,15 @@ class ShmailApp(App):
         try:
             await worker.wait()
             self.switch_screen(MainScreen())
+            if self._sync_timer is not None:
+                self._sync_timer.stop()
+            self._sync_timer = self.set_interval(
+                self.settings.refresh_interval, self.trigger_sync
+            )
         except Exception as e:
             logger.error(f"Boot sequence failed: {e}")
             self.status_message = f"Error: {e}"
             self.switch_screen(LoginScreen())
-
-        self.set_interval(self.settings.refresh_interval, self.trigger_sync)
 
     def _run_initial_boot(self) -> None:
         """Handles database initialization and initial synchronization."""
@@ -82,8 +92,15 @@ class ShmailApp(App):
             if not self.db.get_metadata("history_id"):
                 self.sync_service.initial_sync()
             else:
-                self.status_message = "Restoring previous session..."
-                self.status_progress = 1.0
+                self.call_from_thread(
+                    self._set_status, "Restoring previous session...", 1.0
+                )
+
+    def _set_status(self, message: str, progress: Optional[float] = None) -> None:
+        """Updates global status fields on the UI thread."""
+        self.status_message = message
+        if progress is not None:
+            self.status_progress = progress
 
     async def trigger_sync(self) -> None:
         """Spawns a background worker to perform an incremental sync."""
@@ -92,8 +109,12 @@ class ShmailApp(App):
         worker = self.run_worker(
             self.sync_service.incremental_sync, thread=True, exclusive=True
         )
-        sync_result = await worker.wait()
-        self.post_message(self.SyncComplete(sync_result))
+        try:
+            sync_result = await worker.wait()
+            self.post_message(self.SyncComplete(sync_result))
+        except Exception as exc:
+            logger.exception("Incremental sync failed")
+            self._set_status(f"Sync error: {exc}")
 
     async def on_mount(self) -> None:
         """Application entry point for UI initialization."""

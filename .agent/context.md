@@ -31,7 +31,10 @@
     - **Redundancy Zero-Tolerance**: Always audit for and remove empty methods, duplicate logic, or clashing event handlers during refactoring.
 - **ABSOLUTE GIT RESTRICTION**: Proactive git management (committing, adding, pushing) is strictly forbidden. The User handles all version control. Agents must never attempt to create commits.
 - **Image Strategy**: "Pixels-to-characters" conversion using `rich-pixels` and half-block characters.
-- **HTML Rendering**: HTML to Markdown conversion via `html2text` for the reading layer.
+- **HTML Rendering**: HTML-first reading layer conversion via `inscriptis`, with canonical interaction links extracted from rendered-body markdown tokens (`markdown-it` GFM linkify).
+- **Shared Markdown Contract**: Parser extraction and viewer rendering share the same markdown parser configuration to prevent interaction drift.
+- **Accordion Thread UX**: Thread viewer enforces one expanded message at a time; collapsed/expanded body visibility is controlled in TCSS via `MessageItem.-expanded`.
+- **Active-Link UX**: Keyboard-selected links are marked in-body via parser token injection (`【↗ label 】`) and long-message traversal scrolls active link blocks into view using source-line metadata.
 
 ## Boundaries
 - Restricted to working within the `shmail/` and `tests/` directories.

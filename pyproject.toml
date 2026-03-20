@@ -13,8 +13,7 @@ dependencies = [
     "rich",                     # For beautiful text formatting
     "rich-pixels",              # To render images in the terminal
     "Pillow",                   # To resize and process images
-    "html2text",                # To turn email HTML into readable text
-    "bleach",                   # To keep the HTML safe and clean
+    "inscriptis",               # To turn email HTML into readable text
     "tomli-w",                  # To write TOML files
 ]
 

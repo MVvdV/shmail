@@ -6,6 +6,8 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import ListItem, ListView, Static
 
+from shmail.config import settings
+
 if TYPE_CHECKING:
     from shmail.app import ShmailApp
 
@@ -14,8 +16,8 @@ class ThreadList(ListView):
     """A list view specialized for displaying conversation thread snippets."""
 
     BINDINGS = [
-        Binding("k,up", "cursor_up", "Previous", show=False),
-        Binding("j,down", "cursor_down", "Next", show=False),
+        Binding(settings.keybindings.up, "cursor_up", "Previous", show=False),
+        Binding(settings.keybindings.down, "cursor_down", "Next", show=False),
         Binding("g", "first_thread", "First Thread", show=False),
         Binding("G", "last_thread", "Last Thread", show=False),
     ]
@@ -49,8 +51,21 @@ class ThreadList(ListView):
         """Clears the current list and loads conversations associated with the given label."""
         self.current_label_id = label_id
         self.clear()
+        self.run_worker(
+            lambda: self._load_threads_worker(label_id), thread=True, exclusive=True
+        )
 
+    def _load_threads_worker(self, label_id: str) -> None:
+        """Loads thread rows in a worker and applies them on UI thread."""
         threads = self.shmail_app.db.get_threads(label_id=label_id)
+        self.app.call_from_thread(self._populate_threads, label_id, threads)
+
+    def _populate_threads(self, label_id: str, threads: list[dict]) -> None:
+        """Renders fetched threads when they match the current label context."""
+        if label_id != self.current_label_id:
+            return
+
+        self.clear()
 
         if not threads:
             self.append(

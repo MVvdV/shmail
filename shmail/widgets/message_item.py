@@ -15,7 +15,9 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Markdown, Static
 
+from shmail.config import settings
 from shmail.services.link_policy import is_executable_href
+from shmail.services.parser import MessageParser
 
 if TYPE_CHECKING:
     from shmail.app import ShmailApp
@@ -27,7 +29,9 @@ class MessageItem(Vertical):
     can_focus = True
 
     BINDINGS = [
-        Binding("enter", "toggle_expand", "Expand/Collapse", show=False),
+        Binding(
+            settings.keybindings.select, "toggle_expand", "Expand/Collapse", show=False
+        ),
     ]
 
     expanded = reactive(False)
@@ -36,6 +40,7 @@ class MessageItem(Vertical):
     def __init__(self, message_data: dict, **kwargs):
         super().__init__(**kwargs)
         self.message_data = message_data
+        self._body_source = self.message_data.get("body", "*No content*")
         self._body_links = self._load_body_links()
 
     @property
@@ -61,15 +66,24 @@ class MessageItem(Vertical):
             yield Static(f"To: {recipient}", classes="message-to", markup=False)
             yield Static(self._format_date(), classes="message-date")
 
-        with Vertical(classes="message-body-container"):
-            yield Static("", classes="message-interaction-bar", markup=False)
-            md = Markdown(
-                self.message_data.get("body", "*No content*"),
-                classes="message-markdown",
-            )
-            md.can_focus = False
-            md.can_focus_children = False
-            yield md
+        yield Static("", classes="message-interaction-bar", markup=False)
+        md = Markdown(
+            self._body_source,
+            classes="message-markdown",
+            parser_factory=self._markdown_parser_factory,
+        )
+        md.can_focus = False
+        md.can_focus_children = False
+        yield md
+
+    def _markdown_parser_factory(self):
+        """Build markdown parser with optional active-link marker injection."""
+        active_link = self.active_link_index if self.expanded else None
+        return MessageParser.new_markdown_parser(
+            active_link_index=active_link,
+            active_marker_prefix="【↗ ",
+            active_marker_suffix=" 】",
+        )
 
     def _format_date(self) -> str:
         """Converts database timestamps into user-friendly display strings."""
@@ -88,11 +102,10 @@ class MessageItem(Vertical):
         self.set_class(expanded, "-expanded")
         if not self.is_mounted:
             return
-        body = self.query_one(".message-body-container")
-        body.display = expanded
         if not expanded:
             self.active_link_index = -1
         self._update_interaction_bar()
+        self._refresh_markdown()
 
         if self.has_focus:
             self.screen.post_message(self.ExpandedChanged())
@@ -155,16 +168,7 @@ class MessageItem(Vertical):
         link = self.get_active_link()
         if link is None:
             return
-
-        href = str(link.get("href", "")).strip()
-        executable = is_executable_href(href)
-        if executable:
-            webbrowser.open(href)
-            return
-
-        notify = getattr(self.app, "notify", None)
-        if callable(notify):
-            notify(f"Blocked link scheme: {href}", severity="warning")
+        self._open_href(str(link.get("href", "")).strip())
 
     def _is_interactive_click(self, widget: Widget | None) -> bool:
         """Determines whether a click originated from an interactive body element."""
@@ -181,6 +185,32 @@ class MessageItem(Vertical):
     def on_markdown_link_clicked(self, event: Markdown.LinkClicked) -> None:
         """Allows mouse activation of links while preserving safety rules."""
         href = event.href.strip()
+        canonical = self._resolve_canonical_link(href)
+        if canonical is None:
+            prevent_default = getattr(event, "prevent_default", None)
+            if callable(prevent_default):
+                prevent_default()
+            notify = getattr(self.app, "notify", None)
+            if callable(notify):
+                notify(f"Ignored non-canonical link: {href}", severity="warning")
+            return
+
+        self._open_href(str(canonical.get("href", href)).strip())
+
+    def _resolve_canonical_link(self, href: str) -> dict | None:
+        """Resolve a clicked href to canonical persisted link payload."""
+        href_key = href.strip().lower()
+        return next(
+            (
+                link
+                for link in self._body_links
+                if str(link.get("href", "")).strip().lower() == href_key
+            ),
+            None,
+        )
+
+    def _open_href(self, href: str) -> None:
+        """Open canonical href when executable, otherwise notify user."""
         if is_executable_href(href):
             webbrowser.open(href)
             return
@@ -192,6 +222,44 @@ class MessageItem(Vertical):
     def watch_active_link_index(self, _value: int) -> None:
         """Re-renders interaction bar when active link changes."""
         self._update_interaction_bar()
+        self._refresh_markdown()
+        if self.expanded:
+            self.call_after_refresh(self._scroll_active_link_into_view)
+
+    def _refresh_markdown(self) -> None:
+        """Refresh markdown rendering to reflect active link marker state."""
+        if not self.is_mounted:
+            return
+        markdown = self.query_one(".message-markdown", Markdown)
+        markdown.update(self._body_source)
+
+    def _scroll_active_link_into_view(self) -> None:
+        """Scroll active markdown link block into view when possible."""
+        if not self.is_mounted or not self.expanded:
+            return
+
+        active = self.get_active_link()
+        line_start = active.get("line_start") if active else None
+        if not isinstance(line_start, int) or line_start < 0:
+            self.scroll_visible(top=False)
+            return
+
+        markdown = self.query_one(".message-markdown", Markdown)
+        for node in markdown.walk_children(with_self=False):
+            source_range = getattr(node, "source_range", None)
+            if (
+                isinstance(source_range, tuple)
+                and len(source_range) == 2
+                and isinstance(source_range[0], int)
+                and isinstance(source_range[1], int)
+                and source_range[0] <= line_start < source_range[1]
+            ):
+                scroll_visible = getattr(node, "scroll_visible", None)
+                if callable(scroll_visible):
+                    scroll_visible(top=False)
+                    return
+
+        markdown.scroll_visible(top=False)
 
     def _update_interaction_bar(self) -> None:
         """Updates compact interaction summary above markdown body."""
@@ -217,7 +285,9 @@ class MessageItem(Vertical):
         blocked = (
             " [blocked]" if not is_executable_href(str(active.get("href", ""))) else ""
         )
-        bar.update(f"• {idx}/{len(self._body_links)}{blocked} {label}")
+        kind = str(active.get("kind", "")).strip()
+        kind_hint = f" [{kind}]" if kind else ""
+        bar.update(f"• {idx}/{len(self._body_links)}{kind_hint}{blocked} {label}")
 
     def _load_body_links(self) -> list[dict]:
         """Loads persisted body link index from message row payload."""
@@ -227,7 +297,45 @@ class MessageItem(Vertical):
         try:
             parsed = json.loads(raw)
             if isinstance(parsed, list):
-                links = [entry for entry in parsed if isinstance(entry, dict)]
+                links: list[dict] = []
+                for entry in parsed:
+                    if not isinstance(entry, dict):
+                        continue
+                    href = " ".join(str(entry.get("href") or "").split())
+                    if not href:
+                        continue
+                    label = " ".join(str(entry.get("label") or "").split())
+                    if not label:
+                        label = (
+                            href.replace("mailto:", "", 1)
+                            if href.startswith("mailto:")
+                            else href
+                        )
+                    raw_line_start = entry.get("line_start")
+                    if isinstance(raw_line_start, int):
+                        line_start: int | None = raw_line_start
+                    elif isinstance(raw_line_start, str) and raw_line_start.isdigit():
+                        line_start = int(raw_line_start)
+                    else:
+                        line_start = None
+                    links.append(
+                        {
+                            "label": label,
+                            "href": href,
+                            "executable": is_executable_href(href),
+                            "line_start": line_start,
+                            "kind": (
+                                str(entry.get("kind"))
+                                if entry.get("kind")
+                                in {"image_link", "mailto", "web", "placeholder"}
+                                else (
+                                    "mailto"
+                                    if href.lower().startswith("mailto:")
+                                    else ("placeholder" if href == "#" else "web")
+                                )
+                            ),
+                        }
+                    )
                 return links
         except Exception:
             return []

@@ -343,5 +343,17 @@ class DatabaseService:
             (label_id, label_name, label_type),
         )
 
+    def prune_labels(
+        self, conn: sqlite3.Connection, valid_label_ids: List[str]
+    ) -> None:
+        """Remove labels that no longer exist in the provider label set."""
+        if valid_label_ids:
+            placeholders = ", ".join(["?"] * len(valid_label_ids))
+            conn.execute(
+                f"DELETE FROM labels WHERE id NOT IN ({placeholders})", valid_label_ids
+            )
+        else:
+            conn.execute("DELETE FROM labels")
+
 
 db = DatabaseService()

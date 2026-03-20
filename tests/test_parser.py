@@ -136,7 +136,8 @@ def test_timestamp_normalization():
 def test_plain_text_linkify_trailing_punctuation():
     """Ensure plain text linkification excludes trailing punctuation."""
     source = "Open https://example.com, mail admin@example.com."
-    links = MessageParser._extract_links_from_plain(source)
+    rendered = MessageParser._to_markdown(source, is_html=False)
+    links = MessageParser._extract_links_from_markdown(rendered)
     assert links[0]["label"] == "https://example.com"
     assert links[0]["href"] == "https://example.com"
     assert links[1]["label"] == "admin@example.com"
@@ -239,3 +240,123 @@ def test_html_uppercase_scheme_is_marked_executable():
     links = json.loads(result.message.body_links or "[]")
     assert links
     assert links[0]["executable"] is True
+
+
+def test_plain_text_artifact_rows_are_removed_without_losing_content():
+    """Ensure plain text is preserved while spacing is normalized."""
+    source = (
+        "Status update\n"
+        "| | |\n"
+        "| --- | --- |\n"
+        "+----------+\n"
+        "Proceed to https://example.com\n"
+    )
+    normalized = MessageParser._to_markdown(source, is_html=False)
+    assert "| --- | --- |" in normalized
+    assert "+----------+" in normalized
+    assert "Status update" in normalized
+    assert "https://example.com" in normalized
+
+
+def test_cleanup_markdown_artifacts_collapses_blank_lines_and_border_noise():
+    """Ensure markdown cleanup keeps readable spacing."""
+    noisy = "Header\n\n\n| | |\n──────\nBody\n\n\nFooter\n"
+    cleaned = MessageParser._cleanup_markdown_artifacts(noisy, is_html=False)
+    assert cleaned == "Header\n\n| | |\n──────\nBody\n\nFooter"
+
+
+def test_html_cleanup_removes_layout_indentation_that_triggers_code_blocks():
+    """Ensure HTML conversion output does not accidentally create code blocks."""
+    source = "                 Indented line\n\n  Normal\n"
+    cleaned = MessageParser._cleanup_markdown_artifacts(source, is_html=True)
+    assert cleaned == "Indented line\n\nNormal"
+
+
+def test_html_fallback_metadata_and_links_stay_consistent():
+    """Ensure HTML fallback keeps metadata and link count aligned with persisted links."""
+    mime_content = (
+        'Content-Type: multipart/alternative; boundary="b"\r\n'
+        "\r\n"
+        "--b\r\n"
+        'Content-Type: text/plain; charset="utf-8"\r\n'
+        "\r\n"
+        "Plain fallback https://example.com\r\n"
+        "--b\r\n"
+        'Content-Type: text/html; charset="utf-8"\r\n'
+        "\r\n"
+        "<html><body>   </body></html>\r\n"
+        "--b--"
+    )
+    data = {
+        "raw": base64.urlsafe_b64encode(mime_content.encode()).decode(),
+        "internalDate": "1739700000000",
+    }
+
+    result = MessageParser.parse_gmail_response("id", "tid", data, [])
+    assert result.message.body_source == "plain"
+    warnings = json.loads(result.message.body_conversion_warnings or "[]")
+    assert warnings
+    links = json.loads(result.message.body_links or "[]")
+    assert result.message.body_link_count == len(links)
+    assert links[0]["href"] == "https://example.com"
+
+
+def test_markdown_link_extraction_preserves_duplicate_hrefs_in_order():
+    """Ensure canonical links mirror markdown interactive token order."""
+    body = "[One](https://example.com) [Two](https://example.com)"
+    links = MessageParser._extract_links_from_markdown(body)
+    assert len(links) == 2
+    assert links[0]["label"] == "One"
+    assert links[1]["label"] == "Two"
+    assert links[0]["href"] == "https://example.com"
+    assert links[1]["href"] == "https://example.com"
+
+
+def test_markdown_link_extraction_sets_kind_for_placeholder_and_mailto():
+    """Ensure link kind metadata is populated for lightweight styling hints."""
+    body = "[Logo](#) and mail [support](mailto:support@example.com)"
+    links = MessageParser._extract_links_from_markdown(body)
+    assert links[0]["kind"] == "placeholder"
+    assert links[1]["kind"] == "mailto"
+
+
+def test_markdown_link_extraction_records_line_start_metadata():
+    """Ensure link payload includes source line metadata for scroll syncing."""
+    body = "Intro\n[One](https://example.com)\n[Two](https://example.org)"
+    links = MessageParser._extract_links_from_markdown(body)
+    assert len(links) == 2
+    assert isinstance(links[0].get("line_start"), int)
+    assert isinstance(links[1].get("line_start"), int)
+    assert links[0]["line_start"] <= links[1]["line_start"]
+
+
+def test_new_markdown_parser_injects_active_link_marker_before_selected_link():
+    """Ensure parser factory can inject markers inside the selected link."""
+    parser = MessageParser.new_markdown_parser(
+        active_link_index=1,
+        active_marker_prefix="【↗ ",
+        active_marker_suffix=" 】",
+    )
+    tokens = parser.parse("[One](https://a) [Two](https://b) [Three](https://c)")
+
+    inline_children = []
+    for token in tokens:
+        inline_children.extend(token.children or [])
+
+    link_positions = [
+        index
+        for index, child in enumerate(inline_children)
+        if child.type == "link_open"
+    ]
+    assert len(link_positions) == 3
+    second_open = link_positions[1]
+    assert inline_children[second_open + 1].type == "text"
+    assert inline_children[second_open + 1].content == "【↗ "
+
+    second_close = next(
+        i
+        for i in range(second_open + 1, len(inline_children))
+        if inline_children[i].type == "link_close"
+    )
+    assert inline_children[second_close - 1].type == "text"
+    assert inline_children[second_close - 1].content == " 】"

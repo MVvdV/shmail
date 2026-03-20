@@ -4,6 +4,8 @@ from textual.screen import ModalScreen
 from textual.app import ComposeResult
 from textual.containers import ScrollableContainer, Vertical
 from textual.binding import Binding
+from textual.widget import Widget
+from shmail.config import settings
 from shmail.widgets import MessageItem, ThreadFooter
 
 if TYPE_CHECKING:
@@ -14,9 +16,11 @@ class ThreadViewerScreen(ModalScreen):
     """A modal screen that displays an entire conversation thread using MessageItem instances."""
 
     BINDINGS = [
-        Binding("q,escape", "close", "Close Thread"),
-        Binding("j,down", "next_message", "Next Message", show=False),
-        Binding("k,up", "prev_message", "Previous Message", show=False),
+        Binding(settings.keybindings.close, "close", "Close Thread"),
+        Binding(settings.keybindings.down, "next_message", "Next Message", show=False),
+        Binding(
+            settings.keybindings.up, "prev_message", "Previous Message", show=False
+        ),
         Binding("g", "first_message", "First Message", show=False),
         Binding("G", "last_message", "Last Message", show=False),
         Binding("tab,f", "cycle_forward", "Next Focus", show=False),
@@ -38,30 +42,41 @@ class ThreadViewerScreen(ModalScreen):
             yield ScrollableContainer(id="thread-stack")
             yield ThreadFooter(id="thread-footer")
 
-    def on_mount(self) -> None:
-        """Fetches thread messages and populates the stack."""
-        self.run_worker(self._load_thread, thread=True)
+    async def on_mount(self) -> None:
+        """Fetch thread data in a worker, then mount cards on UI thread."""
+        worker = self.run_worker(
+            lambda: self.shmail_app.db.get_thread_messages(self.thread_id),
+            thread=True,
+            exclusive=True,
+        )
+        messages = await worker.wait()
+        await self._mount_thread_messages(messages)
 
-    def _load_thread(self) -> None:
-        """Retrieves messages from the database and mounts them in the thread stack."""
-        messages = self.shmail_app.db.get_thread_messages(self.thread_id)
+    async def _mount_thread_messages(self, messages: list[dict]) -> None:
+        """Mount all thread message cards and initialize accordion state."""
+        stack = self.query_one("#thread-stack")
+        mounted_items = [MessageItem(message_data) for message_data in messages]
+        mounted_widgets: list[Widget] = list(mounted_items)
 
-        def _mount_messages():
-            stack = self.query_one("#thread-stack")
-            for i, message_data in enumerate(messages):
-                is_latest = i == 0
-                message_widget = MessageItem(message_data)
-                stack.mount(message_widget)
-                message_widget.expanded = is_latest
+        for item in mounted_items:
+            item.expanded = False
 
-            if stack.children:
-                stack.children[0].focus()
+        if mounted_items:
+            await stack.mount_all(mounted_widgets)
+            self._set_active_message(mounted_items[0])
 
-        self.app.call_from_thread(_mount_messages)
+    def on_show(self) -> None:
+        """Reassert single-expanded accordion state when screen becomes visible."""
+        message_items = self._get_message_items()
+        if not message_items:
+            return
+
+        current = self._resolve_focused_message_item()
+        target = current if isinstance(current, MessageItem) else message_items[0]
+        self._set_active_message(target)
 
     def action_next_message(self) -> None:
         """Focuses the next message card in the thread stack."""
-        stack = self.query_one("#thread-stack")
         message_items = self._get_message_items()
         if not message_items:
             return
@@ -74,12 +89,10 @@ class ThreadViewerScreen(ModalScreen):
         idx = message_items.index(current)
         if idx < len(message_items) - 1:
             next_item = message_items[idx + 1]
-            next_item.focus()
-            stack.scroll_to_widget(next_item)
+            self._set_active_message(next_item)
 
     def action_prev_message(self) -> None:
         """Focuses the previous message card in the thread stack."""
-        stack = self.query_one("#thread-stack")
         message_items = self._get_message_items()
         if not message_items:
             return
@@ -92,24 +105,19 @@ class ThreadViewerScreen(ModalScreen):
         idx = message_items.index(current)
         if idx > 0:
             prev_item = message_items[idx - 1]
-            prev_item.focus()
-            stack.scroll_to_widget(prev_item)
+            self._set_active_message(prev_item)
 
     def action_first_message(self) -> None:
         """Jumps to the first (latest) message."""
-        stack = self.query_one("#thread-stack")
         message_items = self._get_message_items()
         if message_items:
-            message_items[0].focus()
-            stack.scroll_to_widget(message_items[0])
+            self._set_active_message(message_items[0])
 
     def action_last_message(self) -> None:
         """Jumps to the last (oldest) message."""
-        stack = self.query_one("#thread-stack")
         message_items = self._get_message_items()
         if message_items:
-            message_items[-1].focus()
-            stack.scroll_to_widget(message_items[-1])
+            self._set_active_message(message_items[-1])
 
     def action_cycle_forward(self) -> None:
         """Cycles focus forward across cards and inner interactive elements."""
@@ -121,15 +129,13 @@ class ThreadViewerScreen(ModalScreen):
 
     def _cycle_focus(self, direction: int) -> None:
         """Applies hierarchical traversal for card and interactive element focus."""
-        stack = self.query_one("#thread-stack")
         message_items = self._get_message_items()
         if not message_items:
             return
 
         current = self._resolve_focused_message_item()
         if current is None:
-            message_items[0].focus()
-            stack.scroll_to_widget(message_items[0])
+            self._set_active_message(message_items[0], select_link_direction=direction)
             return
 
         if current.expanded and current.has_links():
@@ -140,9 +146,7 @@ class ThreadViewerScreen(ModalScreen):
         current_idx = message_items.index(current)
         target_idx = (current_idx + direction) % len(message_items)
         target = message_items[target_idx]
-
-        target.focus()
-        stack.scroll_to_widget(target)
+        self._set_active_message(target, select_link_direction=direction)
 
     def action_close(self) -> None:
         """Dismisses the modal conversation screen."""
@@ -181,7 +185,34 @@ class ThreadViewerScreen(ModalScreen):
         self, _event: MessageItem.ExpandedChanged
     ) -> None:
         """Refreshes shortcuts when a message is expanded or collapsed."""
+        sender = getattr(_event, "sender", None)
+        if isinstance(sender, MessageItem):
+            self._set_active_message(sender)
         self.watch_focused(self.focused)
+
+    def _set_active_message(
+        self,
+        target: MessageItem,
+        select_link_direction: int | None = None,
+    ) -> None:
+        """Apply accordion behavior and optionally enter target link context."""
+        stack = self.query_one("#thread-stack")
+        message_items = self._get_message_items()
+        if target not in message_items:
+            return
+
+        for item in message_items:
+            if item is target:
+                continue
+            item.expanded = False
+
+        target.expanded = True
+        target.focus()
+        stack.scroll_to_widget(target)
+
+        if select_link_direction is not None and target.has_links():
+            target.active_link_index = -1
+            target.step_link(select_link_direction)
 
     @staticmethod
     def _append_link_hint(

@@ -5,14 +5,16 @@ import email.utils
 import html
 import json
 import logging
-import re
+import textwrap
 from datetime import datetime, timezone
 from email import message_from_bytes
 from email.utils import getaddresses
-from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional
 
-import html2text
+from inscriptis import get_text
+from inscriptis.model.config import ParserConfig
+from markdown_it import MarkdownIt
+from markdown_it.token import Token
 
 from shmail.models import Contact, Label, Message, ParsedMessage, ParseMetadata
 from shmail.services.link_policy import is_executable_href
@@ -20,46 +22,8 @@ from shmail.services.link_policy import is_executable_href
 logger = logging.getLogger(__name__)
 
 
-class _HTMLLinkExtractor(HTMLParser):
-    """Extract anchor label/href pairs from HTML."""
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.links: list[dict] = []
-        self._active_href: str | None = None
-        self._active_text: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag != "a":
-            return
-        href = (dict(attrs).get("href") or "").strip()
-        self._active_href = href or None
-        self._active_text = []
-
-    def handle_data(self, data: str) -> None:
-        if self._active_href is None:
-            return
-        self._active_text.append(data)
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag != "a" or self._active_href is None:
-            return
-        label = " ".join("".join(self._active_text).replace("\u00a0", " ").split())
-        self.links.append({"label": label, "href": self._active_href})
-        self._active_href = None
-        self._active_text = []
-
-
 class MessageParser:
     """Transform Gmail payloads into app message models."""
-
-    LINK_PATTERN = re.compile(
-        r"(https?://[^\s<>\"']+|www\.[^\s<>\"']+|[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"
-    )
-    NOISY_PIPE_ROW_PATTERN = re.compile(r"^\s*\|(?:\s*\|\s*)+\s*$")
-    TABLE_SEPARATOR_PATTERN = re.compile(
-        r"^\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)+\|?\s*$"
-    )
 
     @staticmethod
     def parse_gmail_response(
@@ -202,7 +166,7 @@ class MessageParser:
 
         if is_html:
             body_text = MessageParser._to_markdown(decoded_text, is_html=True)
-            body_links = MessageParser._extract_links_from_html(decoded_text)
+            body_links = MessageParser._extract_links_from_markdown(body_text)
             if not body_text.strip() and text_part is not None:
                 warnings.append(
                     "HTML body produced no readable text; using plain-text fallback."
@@ -210,19 +174,15 @@ class MessageParser:
                 plain_text, plain_charset, plain_warnings = MessageParser._decode_part(
                     text_part
                 )
-                plain_normalized = MessageParser._normalize_plain_text(plain_text)
-                body_text = MessageParser._to_markdown(plain_normalized, is_html=False)
-                body_links = MessageParser._extract_links_from_plain(plain_normalized)
+                body_text = MessageParser._to_markdown(plain_text, is_html=False)
+                body_links = MessageParser._extract_links_from_markdown(body_text)
                 warnings.extend(plain_warnings)
                 is_html = False
                 selected_content_type = "text/plain"
                 selected_charset = plain_charset
         else:
-            normalized = MessageParser._normalize_plain_text(decoded_text)
-            body_text = MessageParser._to_markdown(normalized, is_html=False)
-            body_links = MessageParser._extract_links_from_plain(normalized)
-
-        body_links = MessageParser._dedupe_and_rank_links(body_links)
+            body_text = MessageParser._to_markdown(decoded_text, is_html=False)
+            body_links = MessageParser._extract_links_from_markdown(body_text)
 
         metadata = ParseMetadata(
             body_source="html" if is_html else "plain",
@@ -269,155 +229,163 @@ class MessageParser:
         return " ".join(raw_header.split()), canonical or None
 
     @staticmethod
-    def _normalize_plain_text(content: str) -> str:
-        """Strip noisy pseudo-table artifacts from plain-text content."""
-        lines = content.replace("\r\n", "\n").split("\n")
+    def _cleanup_markdown_artifacts(content: str, is_html: bool) -> str:
+        """Normalize output for stable markdown rendering."""
+        cleaned = content.replace("\r\n", "\n").replace("\u200b", "")
+        cleaned = textwrap.dedent(cleaned)
         output: list[str] = []
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-            stripped = line.strip()
-            if MessageParser.NOISY_PIPE_ROW_PATTERN.match(stripped) and i + 1 < len(
-                lines
-            ):
-                if MessageParser.TABLE_SEPARATOR_PATTERN.match(lines[i + 1].strip()):
-                    i += 2
-                    continue
+        previous_blank = False
+
+        for line in cleaned.split("\n"):
+            normalized_line = line.rstrip()
             if (
-                MessageParser.TABLE_SEPARATOR_PATTERN.match(stripped)
-                and "|" in stripped
-                and not any(ch.isalnum() for ch in stripped)
+                is_html
+                and (len(normalized_line) - len(normalized_line.lstrip(" "))) >= 4
             ):
-                i += 1
+                normalized_line = normalized_line.lstrip()
+
+            is_blank = not normalized_line.strip()
+            if is_blank and previous_blank:
                 continue
-            output.append(line)
-            i += 1
-        return "\n".join(output)
+            output.append(normalized_line)
+            previous_blank = is_blank
+
+        return "\n".join(output).strip()
 
     @staticmethod
     def _to_markdown(content: str, is_html: bool) -> str:
         """Convert HTML or plain text content to markdown-like display text."""
         if is_html:
-            converter = html2text.HTML2Text()
-            converter.ignore_images = True
-            converter.ignore_emphasis = False
-            converter.ignore_links = False
-            converter.single_line_break = False
-            converter.body_width = 0
-            converter.inline_links = True
-            converter.wrap_links = False
-            rendered = converter.handle(content)
-            return re.sub(r"\n{3,}", "\n\n", rendered).strip()
-
-        def linkify(match: re.Match[str]) -> str:
-            token = match.group(0)
-            trimmed = token.rstrip('.,;:!?)"]}')
-            trailing = token[len(trimmed) :]
-            if not trimmed:
-                return token
-            if "@" in trimmed and "." in trimmed:
-                return f"[{trimmed}](mailto:{trimmed}){trailing}"
-            href = f"https://{trimmed}" if trimmed.startswith("www.") else trimmed
-            return f"[{trimmed}]({href}){trailing}"
-
-        return re.sub(MessageParser.LINK_PATTERN, linkify, content)
+            rendered = get_text(
+                content,
+                ParserConfig(
+                    display_links=True,
+                    display_images=True,
+                    deduplicate_captions=True,
+                ),
+            )
+            return MessageParser._cleanup_markdown_artifacts(rendered, is_html=True)
+        return MessageParser._cleanup_markdown_artifacts(content, is_html=False)
 
     @staticmethod
-    def _extract_links_from_html(content: str) -> list[dict]:
-        """Extract link candidates from HTML anchor tags."""
-        extractor = _HTMLLinkExtractor()
-        extractor.feed(content)
-        extractor.close()
-
+    def _extract_links_from_markdown(content: str) -> list[dict]:
+        """Extract link candidates from rendered markdown-like body text."""
         links: list[dict] = []
-        for link in extractor.links:
-            href = str(link.get("href") or "").strip()
-            if not href:
-                continue
-            label = str(link.get("label") or "").strip()
-            if not label:
-                label = (
-                    href.replace("mailto:", "", 1)
-                    if href.startswith("mailto:")
-                    else href
-                )
-            links.append(
-                {
-                    "label": label,
-                    "href": href,
-                    "executable": is_executable_href(href),
-                }
-            )
+        parser = MessageParser.new_markdown_parser()
+        for token in parser.parse(content):
+            children = token.children or []
+            line_start = token.map[0] if token.map else None
+            i = 0
+            while i < len(children):
+                child = children[i]
+                if child.type != "link_open":
+                    i += 1
+                    continue
+
+                raw_href = child.attrGet("href")
+                href = " ".join(str(raw_href or "").split())
+                label_parts: list[str] = []
+                has_image = False
+                i += 1
+                while i < len(children) and children[i].type != "link_close":
+                    if children[i].type == "image":
+                        has_image = True
+                    if children[i].content:
+                        label_parts.append(children[i].content)
+                    i += 1
+
+                if href:
+                    label = " ".join(
+                        " ".join(label_parts).replace("\u00a0", " ").split()
+                    )
+                    if not label:
+                        label = (
+                            href.replace("mailto:", "", 1)
+                            if href.startswith("mailto:")
+                            else href
+                        )
+                    links.append(
+                        {
+                            "label": label,
+                            "href": href,
+                            "executable": is_executable_href(href),
+                            "kind": MessageParser._classify_link_kind(href, has_image),
+                            "line_start": line_start,
+                        }
+                    )
+                i += 1
+
         return links
 
     @staticmethod
-    def _extract_links_from_plain(content: str) -> list[dict]:
-        """Extract link candidates from plain text."""
-        links: list[dict] = []
-        for match in MessageParser.LINK_PATTERN.finditer(content):
-            raw = match.group(0)
-            trimmed = raw.rstrip('.,;:!?)"]}')
-            if not trimmed:
-                continue
-            href = (
-                f"mailto:{trimmed}"
-                if "@" in trimmed and "." in trimmed
-                else (f"https://{trimmed}" if trimmed.startswith("www.") else trimmed)
-            )
-            links.append(
-                {
-                    "label": trimmed,
-                    "href": href,
-                    "executable": is_executable_href(href),
-                }
-            )
-        return links
+    def _classify_link_kind(href: str, has_image: bool) -> str:
+        """Classify links for lightweight interaction styling hints."""
+        if has_image:
+            return "image_link"
+        lower = href.lower()
+        if lower.startswith("mailto:"):
+            return "mailto"
+        if href == "#":
+            return "placeholder"
+        return "web"
 
     @staticmethod
-    def _dedupe_and_rank_links(links: list[dict]) -> list[dict]:
-        """Deduplicate links and prefer CTA labels over raw URL labels."""
-        deduped: list[dict] = []
-        by_href: dict[str, dict] = {}
-        by_label: dict[str, dict] = {}
+    def new_markdown_parser(
+        active_link_index: int | None = None,
+        active_marker_prefix: str = "↗ ",
+        active_marker_suffix: str = "",
+    ) -> MarkdownIt:
+        """Return the shared markdown parser used by viewer and extraction."""
+        parser = MarkdownIt("gfm-like")
+        parser.validateLink = lambda url: True
 
-        for link in links:
-            href = str(link.get("href") or "").strip()
-            label = " ".join(str(link.get("label") or "").split())
-            if not href or not label:
-                continue
+        if (
+            active_link_index is not None
+            and active_link_index >= 0
+            and isinstance(active_marker_prefix, str)
+            and isinstance(active_marker_suffix, str)
+            and (active_marker_prefix or active_marker_suffix)
+        ):
 
-            label_key = label.lower()
-            raw_label = label_key == href.lower() or label_key.startswith("http")
+            def inject_active_link_marker(state) -> None:
+                """Insert marker tokens around the selected inline link text."""
+                link_count = 0
+                for token in state.tokens:
+                    children = token.children
+                    if not children:
+                        continue
 
-            existing_href = by_href.get(href)
-            if existing_href is None:
-                payload = {
-                    "label": label,
-                    "href": href,
-                    "executable": bool(link.get("executable", False)),
-                }
-                by_href[href] = payload
-                deduped.append(payload)
-            else:
-                existing_raw = existing_href[
-                    "label"
-                ].lower() == href.lower() or existing_href["label"].lower().startswith(
-                    "http"
-                )
-                if existing_raw and not raw_label:
-                    existing_href["label"] = label
-                    existing_href["executable"] = bool(link.get("executable", False))
+                    updated_children = []
+                    active_link_open = False
+                    for child in children:
+                        if child.type == "link_open":
+                            if link_count == active_link_index:
+                                active_link_open = True
+                            link_count += 1
+                            updated_children.append(child)
+                            if active_link_open and active_marker_prefix:
+                                marker_prefix = Token("text", "", 0)
+                                marker_prefix.content = active_marker_prefix
+                                updated_children.append(marker_prefix)
+                            continue
 
-            if not raw_label and label_key in by_label:
-                previous = by_label[label_key]
-                if previous["href"] != href:
-                    if previous in deduped:
-                        deduped.remove(previous)
-                    by_href.pop(previous["href"], None)
-            if not raw_label:
-                by_label[label_key] = by_href[href]
+                        if child.type == "link_close" and active_link_open:
+                            if active_marker_suffix:
+                                marker_suffix = Token("text", "", 0)
+                                marker_suffix.content = active_marker_suffix
+                                updated_children.append(marker_suffix)
+                            active_link_open = False
+                            updated_children.append(child)
+                            continue
 
-        return deduped
+                        updated_children.append(child)
+                    token.children = updated_children
+
+            parser.core.ruler.push(
+                "shmail_active_link_marker", inject_active_link_marker
+            )
+
+        return parser
 
     @staticmethod
     def _extract_contacts(mime_msg, timestamp: datetime) -> List[Contact]:

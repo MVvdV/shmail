@@ -150,16 +150,16 @@ class SyncService:
     def sync_labels(self) -> None:
         """Refresh the local label registry from Gmail."""
         labels = self.gmail.list_labels()
+        valid_label_ids = [str(label["id"]) for label in labels if label.get("id")]
         with self.db.transaction() as conn:
             for label in labels:
                 self.db.upsert_label(conn, label["id"], label["name"], label["type"])
+            self.db.prune_labels(conn, valid_label_ids)
 
     def _collect_history_operations(self, record) -> HistoryOperation:
         """Collect network-backed record operations before opening a transaction."""
         added_messages = []
-        added_count = 0
         for added in record.messagesAdded:
-            added_count += 1
             try:
                 message_data = self.gmail.get_message(added.message.id)
                 parsed = self.parser.parse_gmail_response(
@@ -176,7 +176,7 @@ class SyncService:
 
         return {
             "added_messages": added_messages,
-            "added_count": added_count,
+            "added_count": len(added_messages),
             "labels_added": list(record.labelsAdded),
             "labels_removed": list(record.labelsRemoved),
             "messages_deleted": list(record.messagesDeleted),

@@ -1,4 +1,3 @@
-/* --- Variables --- */
 $primary: #bb9af7;
 $secondary: #7aa2f7;
 $background: #1a1b26;
@@ -7,7 +6,7 @@ $text: #a9b1d6;
 $success: #9ece6a;
 $error: #f7768e;
 
-/* --- Base --- */
+/* Global */
 * {
     scrollbar-size: 1 1;
     scrollbar-color: $surface;
@@ -23,7 +22,7 @@ Screen {
     color: $text;
 }
 
-/* --- Layout: Header & Footer --- */
+/* Shared header/footer shell */
 AppHeader,
 AppFooter {
     background: $surface;
@@ -48,11 +47,13 @@ AppFooter {
     color: $primary;
 }
 
-#app-version {
+#app-version,
+#thread-version {
     width: auto;
     padding: 0 2;
 }
 
+/* Shared shortcut rendering */
 #app-shortcuts,
 #thread-shortcuts {
     width: 1fr;
@@ -85,7 +86,7 @@ AppFooter {
     padding-left: 1;
 }
 
-/* --- Component: Sidebar --- */
+/* Sidebar */
 #sidebar {
     width: 30;
     height: 100%;
@@ -152,7 +153,7 @@ LabelItem.selected .label-count {
     text-style: bold;
 }
 
-/* --- Component: Thread List --- */
+/* Thread list */
 #thread-list {
     width: 1fr;
     height: 100%;
@@ -177,11 +178,11 @@ LabelItem.selected .label-count {
 }
 
 .thread-count {
-    color: $text 40%;
-    text-style: bold;
     height: 1;
     width: 100%;
     content-align: center middle;
+    color: $text 40%;
+    text-style: bold;
 }
 
 .unread-indicator {
@@ -212,18 +213,18 @@ LabelItem.selected .label-count {
 
 .thread-sender-email {
     width: 1fr;
+    padding-left: 1;
     color: $text 40%;
     text-overflow: ellipsis;
     overflow: hidden;
     text-wrap: nowrap;
-    padding-left: 1;
 }
 
 .thread-date {
     width: auto;
+    padding-left: 1;
     color: $text 40%;
     content-align: right middle;
-    padding-left: 1;
 }
 
 .thread-subject {
@@ -252,7 +253,7 @@ LabelItem.selected .label-count {
     text-style: bold;
 }
 
-/* --- Component: Thread Viewer --- */
+/* Thread viewer modal */
 ThreadViewerScreen {
     align: center middle;
     background: rgba(0, 0, 0, 0.5);
@@ -285,19 +286,12 @@ ThreadViewerScreen {
     color: $text;
 }
 
-#thread-version {
-    width: auto;
-    padding: 0 2;
-}
-
-#thread-shortcuts {
-    width: 1fr;
-    content-align: right middle;
-    padding: 0 2;
+#thread-footer #thread-shortcuts {
     text-style: italic;
     color: $text 80%;
 }
 
+/* Message card */
 MessageItem {
     width: 100%;
     height: auto;
@@ -316,8 +310,8 @@ MessageItem:focus {
 }
 
 .message-subject {
-    text-style: bold;
     color: $primary;
+    text-style: bold;
 }
 
 .message-from,
@@ -331,50 +325,56 @@ MessageItem:focus {
     content-align: right top;
 }
 
-.message-body-container {
+.message-interaction-bar {
     height: auto;
-    padding: 1 2;
-    border-top: solid $background;
-    background: $background;
+    margin: 1 2 0 2;
+    color: $secondary;
+    text-style: italic;
+    display: none;
 }
 
 .message-markdown {
     height: auto;
+    padding: 1 2;
+    border-top: solid $background;
+    background: $background;
+    display: none;
 }
 
-.message-interaction-bar {
-    height: auto;
-    color: $secondary;
-    text-style: italic;
-    margin-bottom: 1;
+MessageItem.-expanded .message-interaction-bar {
+    display: block;
 }
 
-/* --- Markdown Rendering (Tokyo Night) --- */
+MessageItem.-expanded .message-markdown {
+    display: block;
+}
+
+/* Markdown theme */
 Markdown {
     background: transparent;
     color: $text;
 }
 
 Markdown > BlockQuote {
-    border-left: solid $secondary;
-    background: $surface;
     margin: 1 0;
     padding: 0 1;
+    border-left: solid $secondary;
+    background: $surface;
 }
 
 Markdown > H1,
 Markdown > H2,
 Markdown > H3,
 Markdown > H4 {
+    margin: 1 0;
     color: $primary;
     text-style: bold;
-    margin: 1 0;
 }
 
 Markdown > CodeBlock {
+    margin: 1 0;
     background: $surface;
     color: $success;
-    margin: 1 0;
 }
 
 Markdown > Link {
@@ -383,8 +383,8 @@ Markdown > Link {
 }
 
 Markdown > Strong {
-    text-style: bold;
     color: $secondary;
+    text-style: bold;
 }
 
 Markdown > Emph {

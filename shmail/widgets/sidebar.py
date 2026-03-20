@@ -5,6 +5,8 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import ListItem, ListView, Static
 
+from shmail.config import settings
+
 if TYPE_CHECKING:
     from shmail.app import ShmailApp
 
@@ -66,8 +68,8 @@ class Sidebar(Vertical):
     BINDINGS = [
         Binding("[", "shrink_sidebar", "Shrink Sidebar", show=False),
         Binding("]", "expand_sidebar", "Expand Sidebar", show=False),
-        Binding("k,up", "action_cursor_up", "Previous Label", show=False),
-        Binding("j,down", "action_cursor_down", "Next Label", show=False),
+        Binding(settings.keybindings.up, "cursor_up", "Previous Label", show=False),
+        Binding(settings.keybindings.down, "cursor_down", "Next Label", show=False),
         Binding("g", "first_label", "First Label", show=False),
         Binding("G", "last_label", "Last Label", show=False),
     ]
@@ -133,11 +135,15 @@ class Sidebar(Vertical):
 
     def on_mount(self):
         """Populates labels from the database on mount."""
-        self._load_labels()
+        self.run_worker(self._load_labels_worker, thread=True, exclusive=True)
 
-    def _load_labels(self):
-        """Fetches labels from the database and constructs the flattened list hierarchy."""
+    def _load_labels_worker(self) -> None:
+        """Loads labels in a worker thread and mounts results on UI thread."""
         labels = self.shmail_app.db.get_labels_with_counts()
+        self.app.call_from_thread(self._populate_labels, labels)
+
+    def _populate_labels(self, labels: list[dict]) -> None:
+        """Constructs the flattened list hierarchy from fetched label rows."""
         self.label_list.clear()
 
         main_map = {
