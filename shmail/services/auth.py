@@ -1,3 +1,5 @@
+"""Authentication service for Google OAuth credential lifecycle."""
+
 import json
 import logging
 from typing import TYPE_CHECKING, Callable, Optional, cast
@@ -19,7 +21,7 @@ SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
 
 class AuthService:
-    """Manages Google OAuth authentication, token refreshing, and secure credential storage."""
+    """Manage OAuth authentication, refresh, and secure token storage."""
 
     def __init__(
         self, email: Optional[str] = None, on_progress: Optional[Callable] = None
@@ -30,18 +32,18 @@ class AuthService:
         self.meta_service = "shmail_meta"
 
     def get_active_account(self) -> Optional[str]:
-        """Retrieves the email of the currently active account from the OS keyring."""
+        """Return the currently active account email from keyring."""
         active_email = keyring.get_password(self.meta_service, "active_account")
         return active_email if active_email else None
 
     def _update_status(self, message: str, progress: Optional[float] = None) -> None:
-        """Reports progress updates via the provided callback and logs the message."""
+        """Log and forward a progress update to the callback."""
         logger.info(message)
         if self.on_progress:
             self.on_progress(message, progress)
 
     def _get_client_info(self):
-        """Reads client ID and secret from the local credentials configuration."""
+        """Read client ID and secret from credentials.json."""
         path = CONFIG_DIR / "credentials.json"
 
         if not path.exists():
@@ -68,14 +70,14 @@ class AuthService:
         return client_id, client_secret
 
     def _run_oauth_flow(self) -> Credentials:
-        """Executes the local server OAuth flow to obtain user authorization."""
+        """Run the local OAuth flow and return credentials."""
         path = CONFIG_DIR / "credentials.json"
         flow = InstalledAppFlow.from_client_secrets_file(path, SCOPES)
         creds = flow.run_local_server(port=0, access_type="offline", prompt="consent")
         return cast(Credentials, creds)
 
     def _save_to_keyring(self, email: str, creds: Credentials) -> None:
-        """Securely stores the refresh token and active account pointer in the OS keyring."""
+        """Store refresh token and active-account pointer in keyring."""
         if creds.refresh_token:
             keyring.set_password(self.service_name, email, creds.refresh_token)
             keyring.set_password(self.meta_service, "active_account", email)
@@ -83,7 +85,7 @@ class AuthService:
             raise ValueError("No refresh token returned from Google.")
 
     def get_credentials(self) -> Credentials:
-        """Retrieves or refreshes valid Google API credentials for the current user."""
+        """Return valid credentials for the configured account."""
         if not self.email:
             raise ValueError("AuthService requires an email to retrieve credentials.")
 
@@ -117,7 +119,7 @@ class AuthService:
         return creds
 
     def discover_and_authenticate(self) -> str:
-        """Performs first-time authentication and registers the authorized email address."""
+        """Run first-time auth and persist the discovered account email."""
         try:
             self._update_status("Opening browser for Google Auth...", 0.2)
             creds = self._run_oauth_flow()

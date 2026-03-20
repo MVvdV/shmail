@@ -3,8 +3,8 @@
 ## User-Facing Slash Commands
 - `/list-framework`: Show workflows/subagents, risk tiers, and examples.
 - `/upgrade-framework [target_scope] [target_path] [source_path]`: Upgrade framework with inferred defaults and editable preflight.
-- `/start-session`: Audit current project state and return 3-line status.
-- `/close-session`: Update roadmap session state and append handoff entry.
+- `/session-start`: Audit current project state and return 3-line status.
+- `/session-close`: Update roadmap session state and append handoff entry.
 - `/execute-changes`: Apply Tier 2 governance updates after explicit confirmation.
 
 ## Common Usage

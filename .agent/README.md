@@ -28,10 +28,10 @@ This file explains how agents should operate in this repository.
 - `catalog/subagents.md`: subagent index.
 
 ## Required Workflows
-- `/start-session`: run entry audit and return status.
+- `/session-start`: run entry audit and return status.
 - `/list-framework`: show workflows/subagents and usage.
 - `/upgrade-framework [target_scope] [target_path] [source_path]`: upgrade with preflight and discovery/harvest.
-- `/close-session`: update session state and handoff.
+- `/session-close`: update session state and handoff.
 - `/execute-changes`: Tier 2 governance gate.
 
 ## Governance Rules

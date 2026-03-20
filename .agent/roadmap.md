@@ -4,12 +4,12 @@
 - [x] Phase 1: Foundation & Auth (Tickets 1.1 - 1.5)
 - [x] Phase 2: Gmail API & Sync (Tickets 2.1 - 2.6)
 - [x] Phase 3: TUI Scaffolding (Tickets 3.1 - 3.9)
-- [x] Phase 4: Reading & Search (Tickets 4.1, 4.5 complete)
+- [x] Phase 4: Reading & Search (Tickets 4.1, 4.5, 4.7 complete)
 
-## Session State (Last Handover: Mar 14 2026)
-- **Last Action**: Implemented Conversation Threading and performed a full Semantic Refactor across the Database, Models, and UI layers. Stabilized the TUI navigation (`j/k`, `g/G`, Arrows) and established a modular HTML-to-Markdown parsing pipeline.
-- **Next Step**: Implement **Ticket 4.7 - Robust Keyboard Interaction for Markdown Elements** using the "Component-Based Deconstruction" strategy to finally resolve link focus/tabbing issues.
-- **Blockers**: None. Conversational UI and Sync are robust.
+## Session State (Last Handover: Mar 19 2026)
+- **Last Action**: Corrected stale handoff state that referenced a deprecated structural-renderer execution target (`Ticket 4.10`).
+- **Next Step**: Continue the current production viewer path: keep Markdown-based message rendering, preserve persisted `body_links` as the deterministic interaction index, and focus on incremental polish plus regression coverage.
+- **Blockers**: None.
 
 ## Granular Tickets (Migrated)
 
@@ -27,6 +27,42 @@
 - [x] **Ticket 2.4**: Implement `SyncService.incremental_sync` (Gmail History API).
 - [x] **Ticket 2.5**: Implement `MessageParser` (Unified MIME parsing for Email & Contacts).
 - [x] **Ticket 2.6**: Refactor `SyncService` & `DatabaseService` into a Transactional Pipeline.
+- [ ] **Ticket 2.7**: Introduce `ProviderService` Abstraction (Protocol-Agnostic Sync Contract).
+    - **Goal**: Decouple sync orchestration from Gmail-specific APIs.
+    - **Scope**:
+        - Define protocol-neutral provider interface (list containers, fetch messages, incremental changes, profile/cursor access).
+        - Move existing Gmail implementation behind `GmailProviderService` adapter.
+        - Keep `SyncService` focused on orchestration + transactions only.
+    - **Acceptance Criteria**:
+        - `SyncService` depends on provider contract, not Gmail API classes directly.
+        - Existing Gmail sync behavior remains functionally equivalent.
+- [ ] **Ticket 2.8**: Provider Capability & Cursor Model.
+    - **Goal**: Normalize protocol differences (Gmail History IDs, IMAP UID/UIDVALIDITY, JMAP state tokens).
+    - **Scope**:
+        - Add cursor envelope persisted in metadata (`provider`, `cursor_type`, `cursor_value`, `validity`).
+        - Introduce provider capability flags (`supports_threads`, `supports_push`, `supports_server_search`, `supports_labels`).
+        - Update incremental sync flow to use normalized cursor API.
+    - **Acceptance Criteria**:
+        - Cursor storage and restore are provider-aware and migration-safe.
+        - Gmail remains stable under the new model.
+- [ ] **Ticket 2.9**: IMAP Provider Service (Read/Sync Foundation).
+    - **Goal**: Add first non-Gmail protocol backend.
+    - **Scope**:
+        - Implement IMAP container/listing/fetch and incremental update strategy.
+        - Normalize IMAP message payloads into the existing parser + message metadata pipeline (`body`, `body_links`, parse metadata).
+        - Add capability limitations handling (threading/search variability).
+    - **Acceptance Criteria**:
+        - IMAP account can sync inbox and open threads in the existing TUI.
+        - No regressions for Gmail accounts.
+- [ ] **Ticket 2.10**: JMAP Provider Service (Read/Sync Foundation).
+    - **Goal**: Add modern JSON-based protocol backend.
+    - **Scope**:
+        - Implement JMAP mailbox/message/thread/change adapters.
+        - Map JMAP state tokens into normalized cursor model.
+        - Reuse parser + message metadata flow and keep the thread viewer interaction model unchanged.
+    - **Acceptance Criteria**:
+        - JMAP account can sync messages and render threads with existing keyboard model.
+        - Shared provider contract supports Gmail/IMAP/JMAP without per-screen branching.
 
 ### Phase 3: TUI Scaffolding
 - [x] **Ticket 3.1**: Create `app.py` and base `ShmailApp` with `shmail.tcss`.
@@ -46,7 +82,7 @@
 - [ ] **Ticket 4.4**: Implement `SearchBar` widget (As-you-type local filtering).
 - [x] **Ticket 4.5**: UI Styling & Aesthetics Refinement (Tokyo Night borders, centered indicators, dynamic footers).
 - [ ] **Ticket 4.6**: Implement Attachment Bar & Calendar Invite Cards (Standalone interactive widgets).
-- [ ] **Ticket 4.7**: Robust Keyboard Interaction for Markdown Elements.
+- [x] **Ticket 4.7**: Robust Keyboard Interaction for Message Body Links.
     - **Goal**: Enable precise keyboard focus and interaction for links/emails within the message body.
     - **Previous Attempts (Lessons Learned)**:
         - *Standard Markdown with `can_focus_children`*: Links are rendered as Rich segments, not focusable DOM widgets.
@@ -54,13 +90,81 @@
         - *Virtual Cursor (Segment Tinting)*: Visually fragile and complex to synchronize with dynamic line wrapping.
         - *Source Injection (`**link**`)*: Induced visual artifacts and inconsistent highlighting.
         - *Link Picker Modal*: Functional but poor UX (detaches context from the reading flow).
-    - **Proposed Solution**: Component-Based Deconstruction. Parse Markdown tokens via `markdown-it-py` and yield a stack of native widgets (`Static` for text, `LinkComponent` for interactive URLs). This ensures native `Tab` support and 100% scroll stability.
+    - **Implemented Direction**: Keep Markdown rendering for visual fidelity and drive interaction from persisted `body_links`, decoupled from Markdown DOM focus internals.
+    - **Keyboard Contract (Locked: Mar 19 2026)**:
+        - `Tab` and `f` are equivalent forward traversal actions.
+        - `Shift+Tab` and `F` are equivalent reverse traversal actions.
+        - Traversal is hierarchical: move across thread cards, and when a card is expanded, cycle all interactive elements inside before advancing to the next card.
+        - `j/k` always enforce card-level navigation, even when focus is on an inner interactive element.
+        - `Enter` on an interactive element opens the target (`http(s)` / `mailto`) without mutating focus or expansion state.
+        - After external open returns, no auto-focus reassignment is performed; user remains in control.
+    - **Cleanup Requirement**:
+        - Remove legacy internal-link focus hacks and deprecated renderer experiments to avoid conflicting interaction behavior.
+- [ ] **Ticket 4.8**: Rendering Quality & Artifact Reduction.
+    - **Goal**: Improve visual readability of converted message bodies while preserving deterministic keyboard interaction behavior.
+    - **Scope**:
+        - Refine HTML-to-Markdown conversion heuristics for transactional/layout-heavy emails.
+        - Reduce noisy artifacts (table separators, spacing anomalies, redundant wrappers) without harming legitimate content.
+        - Preserve link labels/order and keep `body_links` index aligned with displayed content.
+    - **Acceptance Criteria**:
+        - Representative fixtures render with improved readability and reduced noise.
+        - No regressions in the keyboard contract (`Tab/f`, `Shift+Tab/F`, `j/k`, `Enter`).
+        - Link selection order remains deterministic and consistent with persisted `body_links`.
+- [ ] **Ticket 4.9**: Body Metadata Canonicalization & Legacy Cleanup.
+    - **Goal**: Stabilize the persisted message-body metadata model and remove obsolete paths from prior experiments.
+    - **Scope**:
+        - Treat `body`, `body_links`, and parse metadata fields as the canonical viewer payload.
+        - Remove stale references to deprecated structural-renderer/runtime-document approaches.
+        - Ensure parser, DB schema, and viewer read/write paths remain aligned.
+    - **Acceptance Criteria**:
+        - No runtime references to deprecated body payload models.
+        - Metadata fields are consistently populated and consumed.
+        - Tests cover schema compatibility and metadata behavior.
+- [ ] **Ticket 4.10**: Archived Direction — HTML Structural Renderer.
+    - **Status Note (Mar 19 2026)**: Archived/superseded by the current rendering and interaction architecture. Re-open only with explicit product direction change.
+    - **Archive Rationale**:
+        - Prior structural-renderer experiments introduced content loss, visual instability, and interaction complexity.
+        - Current model delivers better reliability: Markdown display output + persisted interaction index.
 
 ### Phase 5: Composition & Offline
 - [ ] **Ticket 5.1**: Implement `ComposeScreen` (TextArea + Recipient inputs).
 - [ ] **Ticket 5.2**: Implement `DraftService` (Local auto-save + Gmail sync).
 - [ ] **Ticket 5.3**: Implement `ActionQueue` (Local queuing of archive/delete actions).
 - [ ] **Ticket 5.4**: Implement `ConnectivityMonitor` (Status bar heartbeats).
+- [ ] **Ticket 5.5**: `MarkdownInputAdapter` for Composer (Optional Authoring Format).
+    - **Goal**: Allow users to compose using markdown without coupling viewer runtime to markdown.
+    - **Scope**:
+        - Convert markdown authoring input into normalized compose payload for preview/edit surface.
+        - Generate outbound multipart payload (`text/plain` + `text/html`) from normalized compose document.
+    - **Acceptance Criteria**:
+        - Markdown compose is optional and can be toggled.
+        - Sent/forwarded/replied messages preserve expected formatting fidelity.
+- [ ] **Ticket 5.6**: Compose Visual Parity Strategy (Editor vs Viewer Consistency).
+    - **Goal**: Avoid a jarring user experience gap between compose editing and thread-view rendering.
+    - **Scope**:
+        - Keep compose editing reliable with plain text (`TextArea`) while preserving downstream styled rendering in viewer.
+        - Define reply quoting format with nested quote depth and markdown-style quote block appearance in reader.
+        - Ensure compose pipeline always has a plain-text-safe fallback for sending.
+    - **Acceptance Criteria**:
+        - Reply/forward outputs are readable in compose and visually coherent in thread viewer.
+        - Compose-to-send pipeline remains deterministic across providers.
+
+### Phase 7: Protocol Expansion & Account Federation
+- [ ] **Ticket 7.1**: Provider Registry + Account Routing.
+    - **Goal**: Support multiple accounts/providers in one app runtime.
+    - **Scope**:
+        - Register provider implementation per account identity.
+        - Route sync/auth/send operations through provider-specific service from a shared app registry.
+- [ ] **Ticket 7.2**: Protocol-Specific Send Pipeline Abstraction.
+    - **Goal**: Normalize sending flow across Gmail API, IMAP/SMTP, and JMAP Submission.
+    - **Scope**:
+        - Add send capability interface and provider adapters.
+        - Preserve draft/reply/forward behavior through a protocol-neutral compose model.
+
+## Implementation Notes (Locked Decisions)
+- Viewer runtime path uses Markdown display text for rendering and persisted `messages.body_links` as a separate deterministic interaction index.
+- Keyboard contract remains locked: `Tab/f` forward traversal, `Shift+Tab/F` reverse traversal, `j/k` card-level traversal, `Enter` activates selected link.
+- Link UX is explicit and safe: disallowed schemes remain visible/selectable, display `[blocked]` status, and produce a user-facing warning on activation attempt.
 
 ### Phase 6: Polish & Distribution
 - [ ] **Ticket 6.1**: Implement `ThemingEngine`.
@@ -78,3 +182,6 @@
 - [Mar 11 2026 (Evening)]: Optimized Startup sequence with "Discovery-First" Keyring logic. Resolved frozen UI and redundant sync issues using thread-safe `call_from_thread` bridges. Finalized Phase 3 (Resizable Sidebar) and started Phase 4 (EmailViewer with Vim navigation). Upgraded project to Python 3.14.
 - [Mar 14 2026]: Completed Conversation Threading (Ticket 4.1). Implemented a Modal Screen architecture for the thread viewer with a scrollable stack of message cards. Performed a massive Semantic Refactor: "Email" is now for addresses, "Message" for items, and "Thread" for conversations. Established a modular HTML-to-Markdown parser using `html2text`. Stabilized TUI navigation and dynamic shortcut footers. Documented link-interaction blockers in Ticket 4.7.
 - [Mar 18 2026]: Migrated to framework v2 runtime model (`/` workflows + `@` subagents). Preserved existing system constraints (absolute git prohibition, roadmap sovereignty, cooperative tutor behavior) and retained full context/roadmap history.
+- [Mar 19 2026]: Locked Ticket 4.7 keyboard interaction contract for robust mouse-free navigation: `Tab/f` forward traversal, `Shift+Tab/F` reverse traversal, `j/k` card-level override, and `Enter` link activation with no focus-state mutation on return.
+- [Mar 19 2026 (Session Close)]: Closed session with roadmap sync; reaffirmed Ticket 4.10 as the active execution target, specifically HTML-first semantic block rendering with guarded plain-text fallback.
+- [Mar 19 2026 (Correction)]: Session-close handoff entry above was stale. Active direction is implemented Markdown display rendering with persisted `body_links` interaction indexing. Ticket 4.10 is archived unless explicitly re-opened.

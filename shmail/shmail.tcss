@@ -342,11 +342,11 @@ MessageItem:focus {
     height: auto;
 }
 
-/* --- Selection Highlight --- */
-MarkdownLink:focus {
-    background: $primary;
-    color: $background;
-    text-style: bold;
+.message-interaction-bar {
+    height: auto;
+    color: $secondary;
+    text-style: italic;
+    margin-bottom: 1;
 }
 
 /* --- Markdown Rendering (Tokyo Night) --- */

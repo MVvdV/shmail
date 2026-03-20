@@ -19,7 +19,7 @@
 
 ## Framework Registry
 - **Workflow Commands**: `../.opencode/commands/`
-- **Subagents**: `../.opencode/agents/` (`mode: subagent` only)
+- **Agent Definitions**: `../.opencode/agents/` (contains custom primary `tutor` and subagents)
 - **Catalogs**:
   - `./catalog/workflows.md`
   - `./catalog/subagents.md`
@@ -34,7 +34,7 @@
 4. **Project Memory**: `./roadmap.md` is the final authority on task state.
 
 ## Operating Laws
-1. **Session Discipline**: Sessions start with `/start-session` and end with `/close-session`.
+1. **Session Discipline**: Sessions start with `/session-start` and end with `/session-close`.
 2. **Discoverability**: `/list-framework` must show active workflows/subagents with examples.
 3. **Upgrade Discipline**: `/upgrade-framework` supports `project | global` target scope.
 4. **Governance Gate**: Changes to `.agent/`, `.opencode/agents/`, or `.opencode/commands/` require `/execute-changes`.
@@ -48,7 +48,7 @@
 9. **ABSOLUTE GIT PROHIBITION**:
    - Proactive committing is forbidden.
    - Agents must never run `git commit`, `git add`, `git push`, or destructive git commands unless explicitly directed by the user for the specific change.
-   - `/start-session` and `/close-session` must never include git commits.
+   - `/session-start` and `/session-close` must never include git commits.
 10. **Roadmap Sovereignty**:
    - Never delete historical data, completed tickets, or handoff entries from `./roadmap.md`.
    - Always preserve full project evolution context.

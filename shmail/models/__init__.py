@@ -28,6 +28,12 @@ class Message(BaseModel):
     recipient_bcc_addresses: Optional[str] = None
     snippet: str
     body: Optional[str] = None
+    body_links: Optional[str] = None
+    body_source: Optional[str] = None
+    body_content_type: Optional[str] = None
+    body_charset: Optional[str] = None
+    body_link_count: int = 0
+    body_conversion_warnings: Optional[str] = None
     timestamp: datetime
     is_read: bool = False
     has_attachments: bool = False
@@ -56,11 +62,22 @@ class Contact(BaseModel):
     timestamp: datetime
 
 
+class ParseMetadata(BaseModel):
+    """Captures body extraction metadata for diagnostics and testing."""
+
+    body_source: str
+    selected_content_type: Optional[str] = None
+    selected_charset: Optional[str] = None
+    link_count: int = 0
+    conversion_warnings: List[str] = Field(default_factory=list)
+
+
 class ParsedMessage(BaseModel):
     """Container for a parsed message and its discovered contacts."""
 
     message: Message
     contacts: List[Contact]
+    parse_metadata: Optional[ParseMetadata] = None
 
 
 class HistoryMessage(BaseModel):
