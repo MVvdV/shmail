@@ -1,47 +1,25 @@
-# Shmail Agent Runtime Guide
+# Project Agentic Structure
+This folder contains the project framework registry and governance contracts.
 
-This file explains how agents should operate in this repository.
+## File Map
+- `system.md`: Switchboard for active primaries, workflows, subagents, and contracts.
+- `context.md`: Project architecture and boundaries.
+- `roadmap.md`: Session memory and handoff history.
+- `roles/`: Primary role instructions. Tutor is the active custom primary role.
+- `rules/`: Technical standards inherited from `~/.agent/styles/`.
+- `contracts/`: Universal migration and interaction standards.
+- `catalog/`: Human-readable indexes for workflows and subagents.
+- `security.md`: Local pointer to global security policy.
 
-## Purpose
-- Load project-specific laws and context quickly.
-- Clarify where workflow, policy, and memory live.
-- Prevent instruction drift during long sessions.
+## Runtime Model
+- **Primaries**: OpenCode built-in `plan` and `build`, plus custom `tutor`.
+- **Workflows**: Invoked with `/` from `.opencode/commands/`.
+- **Subagents**: Invoked with `@` from `.opencode/agents/` (`mode: subagent`).
+- **Upgrade Command**: `/upgrade-framework [target_scope] [target_path] [source_path]` with required preflight confirmation.
+- **Upgrade Harvesting**: `/upgrade-framework` includes discovery/harvest for non-standard instruction docs before mapping.
 
-## Runtime Entry Order
-1. Read `.agent/system.md`.
-2. Read `.agent/context.md`.
-3. Read `.agent/roadmap.md`.
-4. Apply active role from `.agent/roles/`.
+## Inheritance Logic
+This project uses explicit pointers. Files in `roles/`, `rules/`, and `contracts/` may inherit from `~/.agent/` and then apply local overrides.
 
-## Active Model
-- **Primaries**: OpenCode built-in `plan`, built-in `build`, and custom `tutor`.
-- **Workflows**: Slash commands in `.opencode/commands/`.
-- **Subagents**: `@` agents in `.opencode/agents/` (`mode: subagent`).
-
-## Core Files
-- `system.md`: active laws, governance, routing.
-- `context.md`: architecture, stack, and boundaries.
-- `roadmap.md`: session memory and handoff log.
-- `security.md`: security pointer and local constraints.
-- `contracts/`: migration integrity and interaction standard.
-- `catalog/workflows.md`: workflow command index.
-- `catalog/subagents.md`: subagent index.
-
-## Required Workflows
-- `/session-start`: run entry audit and return status.
-- `/list-framework`: show workflows/subagents and usage.
-- `/upgrade-framework [target_scope] [target_path] [source_path]`: upgrade with preflight and discovery/harvest.
-- `/session-close`: update session state and handoff.
-- `/execute-changes`: Tier 2 governance gate.
-
-## Governance Rules
-- Tier 2 operations require `CONFIRM EXECUTE CHANGES`.
-- `/upgrade-framework` must show inferred scope/source/target and allow edits before apply.
-- `/upgrade-framework` must run discovery/harvest and require explicit import mode selection for discovered docs.
-- Preserve roadmap history and project constraints during upgrades.
-- Optional source config: set `.opencode/settings.json` key `framework.source`. Use `__AUTO__` for portable auto-detection.
-
-## Project-Specific Guardrails
-- Absolute git prohibition remains active unless explicitly directed by user.
-- Respect boundaries in `.agent/context.md`.
-- Do not delete historical entries from `.agent/roadmap.md`.
+## Initialization
+When an agent enters this project, first read `.agent/system.md`, then `.agent/context.md`, then `.agent/roadmap.md`, return state, and wait for explicit user instruction before any edits.

@@ -59,15 +59,29 @@ class LabelItem(ListItem):
         count_text = f"({self.count})" if self.count > 0 else ""
         yield Static(count_text, classes="label-count", markup=False)
 
+    def set_count(self, count: int) -> None:
+        """Update count text in-place for this label row."""
+        self.count = count
+        if count > 0:
+            self.add_class("unread")
+        else:
+            self.remove_class("unread")
 
-class Sidebar(Vertical):
-    """A navigation panel for Gmail labels organized by category and hierarchy."""
+        try:
+            count_widget = self.query_one(".label-count", Static)
+        except Exception:
+            return
+        count_widget.update(f"({count})" if count > 0 else "")
+
+
+class LabelsSidebar(Vertical):
+    """A navigation pane for Gmail labels organized by category and hierarchy."""
 
     can_focus = False
 
     BINDINGS = [
-        Binding("[", "shrink_sidebar", "Shrink Sidebar", show=False),
-        Binding("]", "expand_sidebar", "Expand Sidebar", show=False),
+        Binding("[", "shrink_labels", "Shrink Labels", show=False),
+        Binding("]", "expand_labels", "Expand Labels", show=False),
         Binding(settings.keybindings.up, "cursor_up", "Previous Label", show=False),
         Binding(settings.keybindings.down, "cursor_down", "Next Label", show=False),
         Binding("g", "first_label", "First Label", show=False),
@@ -75,11 +89,13 @@ class Sidebar(Vertical):
     ]
 
     def get_shortcuts(self) -> list[tuple[str, str]]:
-        """Returns the active shortcuts for the Sidebar."""
+        """Returns the active shortcuts for the Labels pane."""
         return [
             ("ENTER", "Select"),
+            ("C", "Compose"),
             ("J/K", "Move"),
             ("G/g", "Top/End"),
+            ("TAB", "Threads"),
             ("[/]", "Resize"),
         ]
 
@@ -97,20 +113,20 @@ class Sidebar(Vertical):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.label_list = ListView(id="sidebar-list")
+        self.label_list = ListView(id="labels-sidebar-list")
 
     def compose(self):
-        """Yields the sidebar list view."""
+        """Yields the labels list view."""
         yield self.label_list
 
-    def action_shrink_sidebar(self) -> None:
-        """Decreases sidebar width."""
+    def action_shrink_labels(self) -> None:
+        """Decreases labels pane width."""
         if self.styles.width is not None:
             current_width = int(self.styles.width.value)
             self.styles.width = max(15, current_width - 2)
 
-    def action_expand_sidebar(self) -> None:
-        """Increases sidebar width."""
+    def action_expand_labels(self) -> None:
+        """Increases labels pane width."""
         if self.styles.width is not None:
             current_width = int(self.styles.width.value)
             self.styles.width = min(60, current_width + 2)
@@ -135,14 +151,55 @@ class Sidebar(Vertical):
 
     def on_mount(self):
         """Populates labels from the database on mount."""
-        self.run_worker(self._load_labels_worker, thread=True, exclusive=True)
+        self.refresh_labels()
+        if hasattr(type(self.shmail_app), "drafts_revision"):
+            self.watch(self.shmail_app, "drafts_revision", self._on_drafts_revision)
 
-    def _load_labels_worker(self) -> None:
+    def _on_drafts_revision(self, _revision: int) -> None:
+        """Refresh label counts after local draft state changes."""
+        self.refresh_labels()
+
+    def refresh_labels(self) -> None:
+        """Reload label rows while preserving current selected label."""
+        selected_label_id = self._get_selected_label_id()
+        self.run_worker(
+            lambda: self._load_labels_worker(selected_label_id),
+            thread=True,
+            exclusive=True,
+        )
+
+    def _get_selected_label_id(self) -> str | None:
+        """Return selected label identifier from current list state."""
+        for child in self.label_list.children:
+            if isinstance(child, LabelItem) and child.has_class("selected"):
+                return child.label_id
+        index = self.label_list.index
+        if index is not None and 0 <= index < len(self.label_list.children):
+            item = self.label_list.children[index]
+            if isinstance(item, LabelItem):
+                return item.label_id
+        return None
+
+    def update_draft_count(self, count: int) -> None:
+        """Update DRAFT label count without reloading all labels."""
+        for child in self.label_list.children:
+            if not isinstance(child, LabelItem):
+                continue
+            label_id = str(child.label_id).upper()
+            label_name = str(child.display_name).upper()
+            if label_id == "DRAFT" or label_name.startswith("DRAFT"):
+                child.set_count(count)
+                return
+        self.refresh_labels()
+
+    def _load_labels_worker(self, selected_label_id: str | None) -> None:
         """Loads labels in a worker thread and mounts results on UI thread."""
         labels = self.shmail_app.db.get_labels_with_counts()
-        self.app.call_from_thread(self._populate_labels, labels)
+        self.app.call_from_thread(self._populate_labels, labels, selected_label_id)
 
-    def _populate_labels(self, labels: list[dict]) -> None:
+    def _populate_labels(
+        self, labels: list[dict], selected_label_id: str | None
+    ) -> None:
         """Constructs the flattened list hierarchy from fetched label rows."""
         self.label_list.clear()
 
@@ -190,6 +247,7 @@ class Sidebar(Vertical):
                 found_more[name] = label
 
         inbox_index = -1
+        selected_index = -1
         for key, disp in main_map.items():
             if key in found_main:
                 label_info = found_main[key]
@@ -198,6 +256,8 @@ class Sidebar(Vertical):
                         disp, label_info["id"], label_info["unread_count"], depth=1
                     )
                 )
+                if selected_label_id and label_info["id"] == selected_label_id:
+                    selected_index = len(self.label_list) - 1
                 if key == "INBOX":
                     inbox_index = len(self.label_list) - 1
 
@@ -211,6 +271,8 @@ class Sidebar(Vertical):
                             disp, label_info["id"], label_info["unread_count"], depth=1
                         )
                     )
+                    if selected_label_id and label_info["id"] == selected_label_id:
+                        selected_index = len(self.label_list) - 1
 
         if found_more:
             self.label_list.append(LabelHeader("More"))
@@ -222,6 +284,8 @@ class Sidebar(Vertical):
                             disp, label_info["id"], label_info["unread_count"], depth=1
                         )
                     )
+                    if selected_label_id and label_info["id"] == selected_label_id:
+                        selected_index = len(self.label_list) - 1
 
         if user_labels:
             self.label_list.append(LabelHeader("Labels"))
@@ -250,11 +314,14 @@ class Sidebar(Vertical):
                         is_last_child=is_last,
                     )
                 )
+                if selected_label_id and label["id"] == selected_label_id:
+                    selected_index = len(self.label_list) - 1
 
-        if inbox_index >= 0:
-            self.label_list.index = inbox_index
+        target_index = selected_index if selected_index >= 0 else inbox_index
+        if target_index >= 0:
+            self.label_list.index = target_index
             self.label_list.focus()
-            item = self.label_list.children[inbox_index]
+            item = self.label_list.children[target_index]
             if isinstance(item, LabelItem):
                 item.add_class("selected")
                 self.post_message(self.LabelSelected(item.label_id))

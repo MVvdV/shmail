@@ -3,11 +3,14 @@ from logging.handlers import RotatingFileHandler
 from typing import Optional
 
 from textual.app import App
+from textual.binding import Binding
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
 
 from shmail.config import settings
 from shmail.screens import LoadingScreen, LoginScreen, MainScreen
+from shmail.widgets import AppHeader
 from shmail.services.auth import AuthService
 from shmail.services.db import db
 from shmail.services.sync import SyncResult, SyncService
@@ -18,6 +21,13 @@ logger = logging.getLogger(__name__)
 class ShmailApp(App):
     """The main application class for Shmail."""
 
+    BINDINGS = [
+        Binding(
+            settings.keybindings.account, "toggle_account_menu", "Account", show=False
+        )
+    ]
+
+    email = reactive("")
     status_message = reactive("Ready")
     status_progress = reactive(0.0)
 
@@ -102,6 +112,35 @@ class ShmailApp(App):
         if progress is not None:
             self.status_progress = progress
 
+    def sign_in_another_account(self) -> None:
+        """Route user to login flow for adding another account."""
+        self.status_message = "Sign in with another account..."
+        self.status_progress = 0.0
+        self.switch_screen(LoginScreen())
+
+    def sign_out_current_account(self) -> None:
+        """Sign out current account and route user to login screen."""
+        target = (self.email or "").strip()
+        if target:
+            AuthService().remove_account(target)
+        self.email = ""
+        self.auth = None
+        self.sync_service = None
+        if self._sync_timer is not None:
+            self._sync_timer.stop()
+            self._sync_timer = None
+        self.status_progress = 0.0
+        self.status_message = "Signed out of current account."
+        self.switch_screen(LoginScreen())
+
+    def action_toggle_account_menu(self) -> None:
+        """Focus and open the account selector when available."""
+        try:
+            header = self.screen.query_one(AppHeader)
+        except NoMatches:
+            return
+        header.activate_account_menu()
+
     async def trigger_sync(self) -> None:
         """Spawns a background worker to perform an incremental sync."""
         if not self.sync_service:
@@ -136,6 +175,7 @@ class ShmailApp(App):
             email = self.settings.email
 
         if email:
+            self.email = email
             await self.initialize_session(email)
         else:
             self.switch_screen(LoginScreen())

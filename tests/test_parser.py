@@ -320,19 +320,18 @@ def test_markdown_link_extraction_sets_kind_for_placeholder_and_mailto():
     assert links[1]["kind"] == "mailto"
 
 
-def test_markdown_link_extraction_records_line_start_metadata():
-    """Ensure link payload includes source line metadata for scroll syncing."""
+def test_markdown_link_extraction_omits_scroll_metadata():
+    """Ensure canonical link payload does not include viewer scroll metadata."""
     body = "Intro\n[One](https://example.com)\n[Two](https://example.org)"
     links = MessageParser._extract_links_from_markdown(body)
     assert len(links) == 2
-    assert isinstance(links[0].get("line_start"), int)
-    assert isinstance(links[1].get("line_start"), int)
-    assert links[0]["line_start"] <= links[1]["line_start"]
+    assert "line_start" not in links[0]
+    assert "line_start" not in links[1]
 
 
-def test_new_markdown_parser_injects_active_link_marker_before_selected_link():
+def test_create_markdown_parser_injects_active_link_marker_before_selected_link():
     """Ensure parser factory can inject markers inside the selected link."""
-    parser = MessageParser.new_markdown_parser(
+    parser = MessageParser.create_markdown_parser(
         active_link_index=1,
         active_marker_prefix="【↗ ",
         active_marker_suffix=" 】",
@@ -360,3 +359,87 @@ def test_new_markdown_parser_injects_active_link_marker_before_selected_link():
     )
     assert inline_children[second_close - 1].type == "text"
     assert inline_children[second_close - 1].content == " 】"
+
+
+def test_create_markdown_parser_breaks_option_preserves_single_newline_breaks():
+    """Ensure compose preview parser can render hard line breaks on single newlines."""
+    parser = MessageParser.create_markdown_parser(breaks=True)
+    html = parser.render("Line one\nLine two")
+    assert "<br" in html
+
+
+def test_html_quotes_preserve_nested_depth_and_signature_inside_quote():
+    """Ensure wrapper + single blockquote normalizes to one quote level."""
+    source = (
+        "<div>Hello</div>"
+        "<div class='gmail_quote'>"
+        "<div>On Tue wrote:</div>"
+        "<blockquote><div>Earlier line</div><div class='gmail_signature'>-- <br/>Sig</div></blockquote>"
+        "</div>"
+    )
+    rendered = MessageParser._to_markdown(source, is_html=True)
+    assert "> On Tue wrote:" in rendered
+    assert "> Earlier line" in rendered
+    assert "> ---" in rendered
+    assert "> Sig" in rendered
+
+
+def test_html_nested_blockquote_depth_is_preserved():
+    """Ensure true nested blockquote structure still increases quote depth."""
+    source = (
+        "<div class='gmail_quote'>"
+        "<blockquote><blockquote><div>Deep line</div></blockquote></blockquote>"
+        "</div>"
+    )
+    rendered = MessageParser._to_markdown(source, is_html=True)
+    assert "> > Deep line" in rendered
+
+
+def test_html_overlapping_quote_wrappers_do_not_stack_depth():
+    """Ensure overlapping wrapper classes don't inflate quote depth."""
+    source = (
+        "<div class='gmail_quote'><div class='yahoo_quoted'>"
+        "<blockquote><div>Quoted line</div></blockquote>"
+        "</div></div>"
+    )
+    rendered = MessageParser._to_markdown(source, is_html=True)
+    assert "> Quoted line" in rendered
+    assert "> > >" not in rendered
+
+
+def test_html_dynamic_quote_wrapper_detection_handles_unknown_quote_class():
+    """Ensure unknown quote-like classes still map to quote wrappers."""
+    source = "<div class='acme_quote_wrapper'><div>Vendor quote line</div></div>"
+    rendered = MessageParser._to_markdown(source, is_html=True)
+    assert "> Vendor quote line" in rendered
+
+
+def test_html_top_level_signature_inserts_separator():
+    """Ensure top-level signatures are separated with horizontal rule."""
+    source = (
+        "<div>Body line</div>"
+        "<div class='gmail_signature'>-- <br/>Sig Name<br/>Role</div>"
+    )
+    rendered = MessageParser._to_markdown(source, is_html=True)
+    assert "Body line" in rendered
+    assert "\n---\n" in rendered
+    assert "Sig Name" in rendered
+
+
+def test_html_inline_emphasis_and_code_are_preserved_when_safe():
+    """Ensure safe inline emphasis tags map to markdown markers."""
+    source = "<p><strong>Bold</strong> and <em>em</em> and <code>x=1</code></p>"
+    rendered = MessageParser._to_markdown(source, is_html=True)
+    assert "**Bold**" in rendered
+    assert "*em*" in rendered
+    assert "`x=1`" in rendered
+
+
+def test_html_pre_blocks_convert_to_fenced_code_blocks():
+    """Ensure multiline preformatted HTML sections map to fenced markdown blocks."""
+    source = "<pre>line1\nline2</pre>"
+    rendered = MessageParser._to_markdown(source, is_html=True)
+    assert rendered.startswith("```")
+    assert "line1" in rendered
+    assert "line2" in rendered
+    assert rendered.endswith("```")

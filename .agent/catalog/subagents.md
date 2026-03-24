@@ -1,12 +1,12 @@
 # Subagent Catalog
 
 ## Available Subagents
-- `instruction-auditor`: Audits pointers, paths, and framework wiring.
-- `migration-auditor`: Validates lossless migration parity.
-- `policy-auditor`: Validates governance compliance and confirmation gates.
-- `qa-auditor`: Finds edge cases and quality risk.
-- `test-strategist`: Builds prioritized test plans.
+- `instruction-auditor`: Validates pointers, path references, and discovery wiring.
+- `migration-auditor`: Verifies lossless migration parity and reports gaps.
+- `policy-auditor`: Enforces governance laws and confirmation requirements.
+- `qa-auditor`: Reviews quality risks, coverage gaps, and regression exposure.
+- `test-strategist`: Produces concise test plans and execution ordering.
 
-## Invocation
-- Use `@subagent-name` in chat.
-- Use workflows to orchestrate repeatable multi-step operations.
+## Invocation Notes
+- Invoke manually with `@subagent-name` in chat.
+- Workflows can invoke subagents internally for specialized checks.

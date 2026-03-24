@@ -42,6 +42,20 @@ class Keybindings(BaseModel):
     down: str = Field(default="j,down", description="Move selection or scroll down.")
     close: str = Field(default="q,escape", description="Close current view or overlay.")
     select: str = Field(default="enter", description="Activate the current selection.")
+    account: str = Field(
+        default="a", description="Focus and open the account selector in the header."
+    )
+    compose: str = Field(
+        default="c", description="Open message draft composer from supported screens."
+    )
+    compose_tab_next: str = Field(
+        default="ctrl+tab,alt+right",
+        description="Switch to the next compose body tab (Edit/Preview).",
+    )
+    compose_tab_prev: str = Field(
+        default="shift+ctrl+tab,alt+left",
+        description="Switch to the previous compose body tab (Edit/Preview).",
+    )
 
 
 class Settings(BaseModel):

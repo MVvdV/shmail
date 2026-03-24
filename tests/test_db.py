@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pytest
 
-from shmail.models import Message
+from shmail.models import Message, MessageDraft
 from shmail.services.db import DatabaseService
 
 
@@ -181,3 +181,188 @@ def test_upsert_message_replace_refreshes_label_associations(test_db):
         ).fetchall()
 
     assert [row["label_id"] for row in rows] == ["SENT"]
+
+
+def test_message_draft_schema_and_persistence(test_db):
+    """Ensure message_drafts schema exists and supports upsert/get/delete."""
+    with test_db.get_connection() as conn:
+        table = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='message_drafts'"
+        ).fetchone()
+    assert table is not None
+
+    now = datetime.now()
+    draft = MessageDraft(
+        id="draft_1",
+        mode="reply",
+        to_addresses="alice@example.com",
+        cc_addresses="",
+        bcc_addresses="",
+        subject="Re: Subject",
+        body="Draft body",
+        source_message_id="msg_123",
+        source_thread_id="thread_123",
+        created_at=now,
+        updated_at=now,
+    )
+
+    with test_db.transaction() as conn:
+        test_db.upsert_message_draft(conn, draft)
+
+    loaded = test_db.get_message_draft("draft_1")
+    assert loaded is not None
+    assert loaded["subject"] == "Re: Subject"
+
+    by_source = test_db.get_message_draft_by_source(
+        mode="reply",
+        source_message_id="msg_123",
+        source_thread_id="thread_123",
+    )
+    assert by_source is not None
+    assert by_source["id"] == "draft_1"
+
+    with test_db.transaction() as conn:
+        test_db.remove_message_draft(conn, "draft_1")
+
+    assert test_db.get_message_draft("draft_1") is None
+
+
+def test_get_threads_for_draft_label_returns_draft_backed_threads(test_db):
+    """Ensure DRAFT label query surfaces local message draft threads."""
+    now = datetime.now()
+    draft = MessageDraft(
+        id="draft_thread_1",
+        mode="reply",
+        to_addresses="alice@example.com",
+        cc_addresses="",
+        bcc_addresses="",
+        subject="Re: Draft Subject",
+        body="Draft body",
+        source_message_id="msg_1",
+        source_thread_id="thread_abc",
+        created_at=now,
+        updated_at=now,
+    )
+
+    with test_db.transaction() as conn:
+        test_db.upsert_message_draft(conn, draft)
+
+    rows = test_db.get_threads("DRAFT")
+    assert rows
+    assert rows[0]["thread_id"] == "thread_abc"
+    assert rows[0]["has_draft"] == 1
+    assert rows[0]["draft_count"] == 1
+
+
+def test_get_thread_messages_includes_local_draft_rows(test_db):
+    """Ensure thread message query merges persisted draft rows."""
+    now = datetime.now()
+    message = Message(
+        id="msg_real",
+        thread_id="thread_merge",
+        subject="Subject",
+        sender="sender@example.com",
+        snippet="snippet",
+        timestamp=now,
+    )
+    draft = MessageDraft(
+        id="draft_merge",
+        mode="reply",
+        to_addresses="alice@example.com",
+        cc_addresses="",
+        bcc_addresses="",
+        subject="Re: Subject",
+        body="Draft update",
+        source_message_id="msg_real",
+        source_thread_id="thread_merge",
+        created_at=now,
+        updated_at=now,
+    )
+
+    with test_db.transaction() as conn:
+        test_db.upsert_message(conn, message)
+        test_db.upsert_message_draft(conn, draft)
+
+    rows = test_db.get_thread_messages("thread_merge")
+    assert len(rows) == 2
+    assert any(row.get("is_draft") == 1 for row in rows)
+    assert any(row.get("draft_id") == "draft_merge" for row in rows)
+
+
+def test_get_thread_messages_sorts_mixed_timezone_timestamps_without_crash(test_db):
+    """Ensure mixed aware/naive timestamp rows sort safely with draft rows."""
+    aware = datetime.fromisoformat("2026-03-24T12:00:00+00:00")
+    draft_time = datetime.fromisoformat("2026-03-24T12:30:00")
+
+    message = Message(
+        id="msg_tz",
+        thread_id="thread_tz",
+        subject="TZ",
+        sender="sender@example.com",
+        snippet="snippet",
+        timestamp=aware,
+    )
+    draft = MessageDraft(
+        id="draft_tz",
+        mode="reply",
+        to_addresses="alice@example.com",
+        cc_addresses="",
+        bcc_addresses="",
+        subject="Re: TZ",
+        body="Body",
+        source_message_id="msg_tz",
+        source_thread_id="thread_tz",
+        created_at=draft_time,
+        updated_at=draft_time,
+    )
+
+    with test_db.transaction() as conn:
+        test_db.upsert_message(conn, message)
+        test_db.upsert_message_draft(conn, draft)
+
+    rows = test_db.get_thread_messages("thread_tz")
+    assert len(rows) == 2
+
+
+def test_get_labels_with_counts_uses_total_local_drafts_for_draft_label(test_db):
+    """Ensure DRAFT label count reflects local draft total, not unread mail."""
+    now = datetime.now()
+    with test_db.transaction() as conn:
+        test_db.upsert_label(conn, "DRAFT", "Draft", "system")
+        test_db.upsert_message_draft(
+            conn,
+            MessageDraft(
+                id="draft_count_1",
+                mode="new",
+                to_addresses="a@example.com",
+                cc_addresses="",
+                bcc_addresses="",
+                subject="Draft 1",
+                body="Body 1",
+                source_message_id=None,
+                source_thread_id=None,
+                created_at=now,
+                updated_at=now,
+            ),
+        )
+        test_db.upsert_message_draft(
+            conn,
+            MessageDraft(
+                id="draft_count_2",
+                mode="new",
+                to_addresses="b@example.com",
+                cc_addresses="",
+                bcc_addresses="",
+                subject="Draft 2",
+                body="Body 2",
+                source_message_id=None,
+                source_thread_id=None,
+                created_at=now,
+                updated_at=now,
+            ),
+        )
+
+    labels = test_db.get_labels_with_counts()
+    draft_label = next((label for label in labels if label["id"] == "DRAFT"), None)
+    assert draft_label is not None
+    assert draft_label["unread_count"] == 2

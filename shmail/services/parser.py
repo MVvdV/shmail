@@ -1,6 +1,7 @@
 """Message parsing and body/link normalization for viewer consumption."""
 
 import base64
+from bisect import bisect_right
 import email.utils
 import html
 import json
@@ -11,8 +12,9 @@ from email import message_from_bytes
 from email.utils import getaddresses
 from typing import Any, Dict, List, Optional
 
-from inscriptis import get_text
+from inscriptis import get_annotated_text, get_text
 from inscriptis.model.config import ParserConfig
+from lxml.html import HtmlElement, fromstring
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
@@ -256,25 +258,320 @@ class MessageParser:
     def _to_markdown(content: str, is_html: bool) -> str:
         """Convert HTML or plain text content to markdown-like display text."""
         if is_html:
-            rendered = get_text(
-                content,
-                ParserConfig(
-                    display_links=True,
-                    display_images=True,
-                    deduplicate_captions=True,
-                ),
+            annotation_rules = MessageParser._build_annotation_rules(content)
+            config = ParserConfig(
+                display_links=True,
+                display_images=True,
+                deduplicate_captions=True,
+                annotation_rules=annotation_rules,
             )
+            rendered_data = get_annotated_text(content, config)
+            rendered = MessageParser._reconstruct_markdown_from_annotations(
+                rendered_data.get("text", ""),
+                rendered_data.get("label", []),
+            )
+            if not rendered.strip():
+                rendered = get_text(content, config)
             return MessageParser._cleanup_markdown_artifacts(rendered, is_html=True)
         return MessageParser._cleanup_markdown_artifacts(content, is_html=False)
+
+    @staticmethod
+    def _build_annotation_rules(content: str) -> dict[str, list[str]]:
+        """Build annotation selectors for quote/signature/emphasis fidelity."""
+        rules: dict[str, list[str]] = {
+            "blockquote": ["quote_block"],
+            "strong": ["strong"],
+            "b": ["strong"],
+            "em": ["em"],
+            "i": ["em"],
+            "code": ["code"],
+            "pre": ["pre"],
+        }
+
+        quote_markers = {
+            "quote",
+            "quoted",
+            "gmail_quote",
+            "gmail_extra",
+            "yahoo_quoted",
+            "moz-cite-prefix",
+            "protonmail_quote",
+            "reply",
+        }
+        signature_markers = {"signature", "gmail_signature"}
+
+        try:
+            tree = fromstring(content)
+        except Exception:
+            tree = None
+
+        if isinstance(tree, HtmlElement):
+            for element in tree.iter():
+                class_value = element.attrib.get("class", "")
+                element_id = element.attrib.get("id", "")
+                tokens = [
+                    token.strip().lower()
+                    for token in f"{class_value} {element_id}".split()
+                    if token.strip()
+                ]
+                for token in tokens:
+                    if token in quote_markers or "quote" in token or "cite" in token:
+                        rules[f"#class={token}"] = ["quote_wrap"]
+                        rules[f"#id={token}"] = ["quote_wrap"]
+                    if token in signature_markers or "signature" in token:
+                        rules[f"#class={token}"] = ["signature"]
+                        rules[f"#id={token}"] = ["signature"]
+
+        return rules
+
+    @staticmethod
+    def _reconstruct_markdown_from_annotations(
+        text: str, labels: list[tuple[int, int, str]]
+    ) -> str:
+        """Rebuild markdown-friendly text from annotated HTML render output."""
+        if not text:
+            return ""
+
+        line_bounds: list[tuple[int, int]] = []
+        line_starts: list[int] = []
+        lines: list[str] = []
+        cursor = 0
+        for segment in text.splitlines(keepends=True):
+            line = segment.rstrip("\r\n")
+            start = cursor
+            end = cursor + len(segment)
+            line_starts.append(start)
+            line_bounds.append((start, end))
+            lines.append(line)
+            cursor = end
+        if not lines:
+            lines = text.splitlines() or [text]
+            pos = 0
+            for line in lines:
+                start = pos
+                end = pos + len(line)
+                line_starts.append(start)
+                line_bounds.append((start, end))
+                pos = end + 1
+
+        quote_wrapper = [False] * len(lines)
+        quote_block_depth = [0] * len(lines)
+        signature_marked = [False] * len(lines)
+        inline_spans: dict[int, list[tuple[int, int, str]]] = {}
+        pre_ranges: list[tuple[int, int]] = []
+
+        def line_index_for_position(position: int) -> int:
+            idx = bisect_right(line_starts, position) - 1
+            if idx < 0:
+                return 0
+            if idx >= len(lines):
+                return len(lines) - 1
+            return idx
+
+        for raw_start, raw_end, raw_label in labels:
+            if not isinstance(raw_start, int) or not isinstance(raw_end, int):
+                continue
+            if raw_end <= raw_start:
+                continue
+            label = str(raw_label)
+            start_line = line_index_for_position(raw_start)
+            end_line = line_index_for_position(max(raw_start, raw_end - 1))
+
+            if label == "quote_wrap":
+                for i in range(start_line, end_line + 1):
+                    if lines[i].strip():
+                        quote_wrapper[i] = True
+                continue
+
+            if label == "quote_block":
+                for i in range(start_line, end_line + 1):
+                    if lines[i].strip():
+                        quote_block_depth[i] += 1
+                continue
+
+            if label == "signature":
+                for i in range(start_line, end_line + 1):
+                    if lines[i].strip():
+                        signature_marked[i] = True
+                continue
+
+            if label == "pre":
+                pre_ranges.append((start_line, end_line))
+                continue
+
+            if label not in {"strong", "em", "code"}:
+                continue
+            if start_line != end_line:
+                continue
+            line_idx = start_line
+            line_start, line_end = line_bounds[line_idx]
+            local_start = max(0, raw_start - line_start)
+            local_end = min(len(lines[line_idx]), max(0, raw_end - line_start))
+            if local_end <= local_start:
+                continue
+            inline_spans.setdefault(line_idx, []).append(
+                (local_start, local_end, label)
+            )
+
+        for start, end in pre_ranges:
+            for i in range(start, end + 1):
+                inline_spans.pop(i, None)
+
+        quote_depth = [
+            max(quote_block_depth[i], 1 if quote_wrapper[i] else 0)
+            for i in range(len(lines))
+        ]
+
+        last_nonblank = max(
+            (i for i, line in enumerate(lines) if line.strip()), default=-1
+        )
+        if last_nonblank >= 0:
+            threshold = max(0, last_nonblank - 12)
+            for i in range(threshold, last_nonblank + 1):
+                stripped = lines[i].strip()
+                if stripped == "--" or stripped.startswith("-- "):
+                    signature_marked[i] = True
+                    for j in range(i + 1, len(lines)):
+                        if quote_depth[j] == quote_depth[i]:
+                            signature_marked[j] = True
+                    break
+
+        for line_idx, spans in inline_spans.items():
+            line = lines[line_idx]
+            if not line.strip():
+                continue
+
+            candidates: list[tuple[int, int, str, int]] = []
+            for start, end, label in spans:
+                snippet = line[start:end]
+                if not snippet.strip():
+                    continue
+                if any(ch in snippet for ch in "[]()"):
+                    continue
+                if label == "strong":
+                    if "*" in snippet or "`" in snippet:
+                        continue
+                    marker = "**"
+                    priority = 2
+                elif label == "em":
+                    if "*" in snippet or "`" in snippet:
+                        continue
+                    marker = "*"
+                    priority = 1
+                else:
+                    if "`" in snippet:
+                        continue
+                    marker = "`"
+                    priority = 3
+                candidates.append((start, end, marker, priority))
+
+            if not candidates:
+                continue
+
+            candidates.sort(key=lambda item: (item[0], -item[1], -item[3]))
+            selected: list[tuple[int, int, str]] = []
+            occupied = [False] * len(line)
+            for start, end, marker, _priority in candidates:
+                if any(occupied[pos] for pos in range(start, min(end, len(line)))):
+                    continue
+                for pos in range(start, min(end, len(line))):
+                    occupied[pos] = True
+                selected.append((start, end, marker))
+
+            if not selected:
+                continue
+
+            transformed = line
+            for start, end, marker in sorted(
+                selected, key=lambda item: item[0], reverse=True
+            ):
+                transformed = (
+                    transformed[:start]
+                    + marker
+                    + transformed[start:end]
+                    + marker
+                    + transformed[end:]
+                )
+            lines[line_idx] = transformed
+
+        pre_line_index: set[int] = set()
+        for start, end in pre_ranges:
+            if start < 0 or end >= len(lines):
+                continue
+            if any(
+                quote_depth[i] > 0 for i in range(start, end + 1) if lines[i].strip()
+            ):
+                continue
+            for i in range(start, end + 1):
+                pre_line_index.add(i)
+
+        signature_start_by_depth: dict[int, int] = {}
+        for i, marked in enumerate(signature_marked):
+            if not marked or not lines[i].strip():
+                continue
+            depth = quote_depth[i]
+            current = signature_start_by_depth.get(depth)
+            if current is None or i < current:
+                signature_start_by_depth[depth] = i
+
+        separator_before_line: set[int] = set()
+        for depth, line_idx in signature_start_by_depth.items():
+            if line_idx <= 0:
+                continue
+            previous_nonblank = next(
+                (j for j in range(line_idx - 1, -1, -1) if lines[j].strip()), None
+            )
+            if (
+                previous_nonblank is not None
+                and quote_depth[previous_nonblank] == depth
+            ):
+                prev = lines[previous_nonblank].strip()
+                if prev in {"---", "***", "___"}:
+                    continue
+            separator_before_line.add(line_idx)
+
+        def quote_prefix(depth: int) -> str:
+            return "> " * max(0, depth)
+
+        output: list[str] = []
+        i = 0
+        while i < len(lines):
+            if i in separator_before_line:
+                depth = quote_depth[i]
+                output.append(f"{quote_prefix(depth)}---".rstrip())
+                if lines[i].strip() == "--" or lines[i].strip().startswith("-- "):
+                    i += 1
+                    if i >= len(lines):
+                        break
+
+            if i in pre_line_index:
+                output.append("```")
+                while i < len(lines) and i in pre_line_index:
+                    output.append(lines[i].rstrip())
+                    i += 1
+                output.append("```")
+                continue
+
+            depth = quote_prefix(quote_depth[i])
+            stripped = lines[i].lstrip()
+            if quote_depth[i] > 0:
+                if stripped:
+                    output.append(f"{depth}{stripped}".rstrip())
+                else:
+                    output.append(depth.rstrip())
+            else:
+                output.append(lines[i].rstrip())
+            i += 1
+
+        return "\n".join(output)
 
     @staticmethod
     def _extract_links_from_markdown(content: str) -> list[dict]:
         """Extract link candidates from rendered markdown-like body text."""
         links: list[dict] = []
-        parser = MessageParser.new_markdown_parser()
+        parser = MessageParser.create_markdown_parser()
         for token in parser.parse(content):
             children = token.children or []
-            line_start = token.map[0] if token.map else None
             i = 0
             while i < len(children):
                 child = children[i]
@@ -310,7 +607,6 @@ class MessageParser:
                             "href": href,
                             "executable": is_executable_href(href),
                             "kind": MessageParser._classify_link_kind(href, has_image),
-                            "line_start": line_start,
                         }
                     )
                 i += 1
@@ -330,13 +626,15 @@ class MessageParser:
         return "web"
 
     @staticmethod
-    def new_markdown_parser(
+    def create_markdown_parser(
         active_link_index: int | None = None,
         active_marker_prefix: str = "↗ ",
         active_marker_suffix: str = "",
+        breaks: bool = False,
     ) -> MarkdownIt:
         """Return the shared markdown parser used by viewer and extraction."""
         parser = MarkdownIt("gfm-like")
+        parser.options["breaks"] = breaks
         parser.validateLink = lambda url: True
 
         if (

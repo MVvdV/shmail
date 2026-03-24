@@ -7,9 +7,12 @@ from unittest.mock import patch
 
 import pytest
 from textual.app import App
+from textual.widgets import Input, TextArea
 
-from shmail.models import Message
-from shmail.screens.viewer import ThreadViewerScreen
+from shmail.models import Message, MessageDraft
+from shmail.screens.message_draft import MessageDraftScreen
+from shmail.screens.thread_compose_action import ThreadComposeActionChooserScreen
+from shmail.screens.thread_messages import ThreadMessagesScreen
 from shmail.services.db import DatabaseService
 from shmail.widgets import MessageItem
 
@@ -34,7 +37,9 @@ def _seed_thread_messages(test_db: DatabaseService) -> None:
         id="msg_latest",
         thread_id="thread_1",
         subject="Latest",
-        sender="alice@example.com",
+        sender="Alice",
+        sender_address="alice@example.com",
+        recipient_to_addresses="bob@example.com,tester@example.com",
         snippet="latest",
         body="[Example](https://example.com) and [Blocked](javascript:alert(1))",
         body_links=body_links_payload,
@@ -62,6 +67,7 @@ class ViewerTestApp(App):
     def __init__(self, db_service: DatabaseService):
         super().__init__()
         self.db = db_service
+        self.email = "tester@example.com"
         self.notifications: list[tuple[str, str]] = []
 
     def notify(self, message: str, severity: str = "information", **_kwargs) -> None:
@@ -70,7 +76,7 @@ class ViewerTestApp(App):
 
     def on_mount(self) -> None:
         """Pushes the thread viewer screen at startup."""
-        self.push_screen(ThreadViewerScreen("thread_1"))
+        self.push_screen(ThreadMessagesScreen("thread_1"))
 
 
 def test_thread_viewer_cycle_traversal_between_links_and_cards(test_db):
@@ -83,7 +89,7 @@ def test_thread_viewer_cycle_traversal_between_links_and_cards(test_db):
             await pilot.pause()
             await pilot.pause()
 
-            screen = cast(ThreadViewerScreen, app.screen)
+            screen = cast(ThreadMessagesScreen, app.screen)
             items = [
                 child
                 for child in screen.query("MessageItem")
@@ -132,7 +138,7 @@ def test_thread_viewer_keeps_only_active_message_expanded(test_db):
             await pilot.pause()
             await pilot.pause()
 
-            screen = cast(ThreadViewerScreen, app.screen)
+            screen = cast(ThreadMessagesScreen, app.screen)
             items = [
                 child
                 for child in screen.query("MessageItem")
@@ -167,7 +173,7 @@ def test_enter_opens_allowed_link_and_blocks_disallowed_link(test_db):
             await pilot.pause()
             await pilot.pause()
 
-            screen = cast(ThreadViewerScreen, app.screen)
+            screen = cast(ThreadMessagesScreen, app.screen)
             latest = screen.query_one(MessageItem)
 
             latest.step_link(1)
@@ -236,6 +242,85 @@ def test_message_item_loads_only_canonical_link_payloads(test_db):
     assert active["href"] == "HTTPS://example.com"
     assert active["label"] == "HTTPS://example.com"
     assert active["executable"] is True
+
+
+def test_thread_compose_binding_opens_chooser_then_reply_draft(test_db):
+    """Verify c from thread screen opens chooser and reply draft seed."""
+    _seed_thread_messages(test_db)
+
+    async def run_test() -> None:
+        app = ViewerTestApp(test_db)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.pause()
+
+            await pilot.press("c")
+            await pilot.pause()
+            assert isinstance(app.screen, ThreadComposeActionChooserScreen)
+
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert isinstance(app.screen, MessageDraftScreen)
+            to_field = app.screen.query_one("#draft-to", Input)
+            subject_field = app.screen.query_one("#draft-subject", Input)
+            editor = app.screen.query_one("#message-draft-editor", TextArea)
+
+            assert "alice@example.com" in to_field.value
+            assert subject_field.value.startswith("Re:")
+            assert "wrote:" in editor.text
+
+    asyncio.run(run_test())
+
+
+def test_thread_compose_on_draft_card_resumes_existing_draft(test_db):
+    """Verify compose from focused draft card opens existing draft directly."""
+    _seed_thread_messages(test_db)
+    now = datetime.now()
+    draft = MessageDraft(
+        id="draft_resume",
+        mode="reply",
+        to_addresses="alice@example.com",
+        cc_addresses="",
+        bcc_addresses="",
+        subject="Re: Latest",
+        body="Resume me",
+        source_message_id="msg_latest",
+        source_thread_id="thread_1",
+        created_at=now,
+        updated_at=now,
+    )
+
+    with test_db.transaction() as conn:
+        test_db.upsert_message_draft(conn, draft)
+
+    async def run_test() -> None:
+        app = ViewerTestApp(test_db)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.pause()
+
+            screen = cast(ThreadMessagesScreen, app.screen)
+            items = [
+                child
+                for child in screen.query("MessageItem")
+                if isinstance(child, MessageItem)
+            ]
+            draft_item = next(
+                item for item in items if item.message_data.get("is_draft")
+            )
+            assert draft_item.get_shortcuts()[0] == ("ENTER", "Resume Draft")
+            draft_item.focus()
+            await pilot.pause()
+
+            await pilot.press("c")
+            await pilot.pause()
+            assert isinstance(app.screen, MessageDraftScreen)
+            subject_field = app.screen.query_one("#draft-subject", Input)
+            assert subject_field.value == "Re: Latest"
+
+    asyncio.run(run_test())
 
 
 def test_mouse_click_ignores_noncanonical_markdown_link(test_db):

@@ -18,4 +18,3 @@ Keyboard-first terminal email client built with Textual.
 - Canonical persisted `body_links` extracted from rendered markdown tokens (order-preserving, no collapse)
 - Shared markdown parser contract between extraction and viewer rendering
 - Active keyboard link marker rendered inline as `【↗ label 】`
-- Long-message active-link traversal keeps selection visible via source-range scroll sync

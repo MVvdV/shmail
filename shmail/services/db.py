@@ -3,11 +3,12 @@
 import contextlib
 import logging
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Generator, List, Optional
 
 if TYPE_CHECKING:
-    from shmail.models import Message
+    from shmail.models import Message, MessageDraft
 
 from shmail.config import CONFIG_DIR
 
@@ -105,6 +106,24 @@ class DatabaseService:
                     )
                 """)
 
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS message_drafts (
+                        id TEXT PRIMARY KEY,
+                        mode TEXT NOT NULL,
+                        to_addresses TEXT,
+                        cc_addresses TEXT,
+                        bcc_addresses TEXT,
+                        subject TEXT,
+                        body TEXT,
+                        source_message_id TEXT,
+                        source_thread_id TEXT,
+                        created_at DATETIME NOT NULL,
+                        updated_at DATETIME NOT NULL
+                    )
+                    """
+                )
+
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS contacts (
                         email TEXT PRIMARY KEY,
@@ -143,6 +162,55 @@ class DatabaseService:
             ).fetchone()
             return row["value"] if row else None
 
+    def get_message_draft(self, draft_id: str) -> Optional[dict]:
+        """Return one message draft row by draft identifier."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM message_drafts WHERE id = ?", (draft_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_message_draft_by_source(
+        self,
+        mode: str,
+        source_message_id: Optional[str],
+        source_thread_id: Optional[str],
+    ) -> Optional[dict]:
+        """Return latest draft row for a specific seed source context."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM message_drafts
+                WHERE mode = ?
+                  AND (
+                    source_message_id = ?
+                    OR (source_message_id IS NULL AND ? IS NULL)
+                  )
+                  AND (
+                    source_thread_id = ?
+                    OR (source_thread_id IS NULL AND ? IS NULL)
+                  )
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (
+                    mode,
+                    source_message_id,
+                    source_message_id,
+                    source_thread_id,
+                    source_thread_id,
+                ),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def list_message_drafts(self) -> List[dict]:
+        """Return all persisted message drafts sorted by update time."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM message_drafts ORDER BY updated_at DESC"
+            ).fetchall()
+            return [dict(row) for row in rows]
+
     def get_message(self, message_id: str) -> Optional[dict]:
         """Return one message by ID joined with sender contact name."""
         with self.get_connection() as conn:
@@ -161,6 +229,9 @@ class DatabaseService:
         self, label_id: str, limit: int = 50, offset: int = 0
     ) -> List[dict]:
         """Return latest thread messages for a label with thread counts."""
+        if label_id.upper() == "DRAFT":
+            return self._get_draft_threads(limit=limit, offset=offset)
+
         with self.get_connection() as conn:
             cursor = conn.execute(
                 """
@@ -178,15 +249,96 @@ class DatabaseService:
                     SELECT thread_id, COUNT(*) as thread_count
                     FROM messages
                     GROUP BY thread_id
+                ),
+                DraftCounts AS (
+                    SELECT source_thread_id AS thread_id, COUNT(*) AS draft_count
+                    FROM message_drafts
+                    WHERE source_thread_id IS NOT NULL
+                    GROUP BY source_thread_id
                 )
-                SELECT lm.*, tc.thread_count
+                SELECT
+                    lm.*,
+                    tc.thread_count,
+                    COALESCE(dc.draft_count, 0) AS draft_count,
+                    CASE WHEN COALESCE(dc.draft_count, 0) > 0 THEN 1 ELSE 0 END AS has_draft,
+                    0 AS is_draft,
+                    NULL AS draft_id
                 FROM LatestMessages lm
                 JOIN ThreadCounts tc ON lm.thread_id = tc.thread_id
+                LEFT JOIN DraftCounts dc ON lm.thread_id = dc.thread_id
                 WHERE lm.rank = 1
                 ORDER BY lm.timestamp DESC
                 LIMIT ? OFFSET ?
                 """,
                 (label_id, limit, offset),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def _get_draft_threads(self, limit: int = 50, offset: int = 0) -> List[dict]:
+        """Return thread rows derived from local message drafts."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                WITH DraftResolved AS (
+                    SELECT
+                        id AS draft_id,
+                        COALESCE(source_thread_id, 'draft:' || id) AS resolved_thread_id,
+                        mode,
+                        to_addresses,
+                        cc_addresses,
+                        bcc_addresses,
+                        subject,
+                        body,
+                        created_at,
+                        updated_at
+                    FROM message_drafts
+                ),
+                DraftLatest AS (
+                    SELECT
+                        dr.*,
+                        ROW_NUMBER() OVER (PARTITION BY resolved_thread_id ORDER BY updated_at DESC) AS rank
+                    FROM DraftResolved dr
+                ),
+                DraftCounts AS (
+                    SELECT resolved_thread_id, COUNT(*) AS draft_count
+                    FROM DraftResolved
+                    GROUP BY resolved_thread_id
+                ),
+                MessageThreadCounts AS (
+                    SELECT thread_id, COUNT(*) AS message_count
+                    FROM messages
+                    GROUP BY thread_id
+                )
+                SELECT
+                    dl.resolved_thread_id AS thread_id,
+                    COALESCE(NULLIF(dl.subject, ''), '(Draft)') AS subject,
+                    'You' AS sender,
+                    '' AS sender_address,
+                    'You' AS sender_display,
+                    dl.to_addresses AS recipient_to,
+                    dl.to_addresses AS recipient_to_addresses,
+                    dl.cc_addresses AS recipient_cc,
+                    dl.cc_addresses AS recipient_cc_addresses,
+                    dl.bcc_addresses AS recipient_bcc,
+                    dl.bcc_addresses AS recipient_bcc_addresses,
+                    SUBSTR(REPLACE(COALESCE(dl.body, ''), CHAR(10), ' '), 1, 120) AS snippet,
+                    dl.body AS body,
+                    dl.updated_at AS timestamp,
+                    1 AS is_read,
+                    0 AS has_attachments,
+                    COALESCE(mtc.message_count, 0) + dc.draft_count AS thread_count,
+                    dc.draft_count AS draft_count,
+                    1 AS has_draft,
+                    1 AS is_draft,
+                    dl.draft_id AS draft_id
+                FROM DraftLatest dl
+                JOIN DraftCounts dc ON dl.resolved_thread_id = dc.resolved_thread_id
+                LEFT JOIN MessageThreadCounts mtc ON dl.resolved_thread_id = mtc.thread_id
+                WHERE dl.rank = 1
+                ORDER BY dl.updated_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (limit, offset),
             )
             return [dict(row) for row in cursor.fetchall()]
 
@@ -203,7 +355,76 @@ class DatabaseService:
                 """,
                 (thread_id,),
             )
-            return [dict(row) for row in cursor.fetchall()]
+            messages = [dict(row) for row in cursor.fetchall()]
+
+            draft_rows = conn.execute(
+                """
+                SELECT *
+                FROM message_drafts
+                WHERE COALESCE(source_thread_id, 'draft:' || id) = ?
+                ORDER BY updated_at DESC
+                """,
+                (thread_id,),
+            ).fetchall()
+
+            for row in draft_rows:
+                draft = dict(row)
+                messages.append(
+                    {
+                        "id": f"draft:{draft['id']}",
+                        "thread_id": thread_id,
+                        "subject": draft.get("subject") or "(Draft)",
+                        "sender": "You (Draft)",
+                        "sender_name": "You",
+                        "sender_address": "",
+                        "recipient_to": draft.get("to_addresses") or "",
+                        "recipient_to_addresses": draft.get("to_addresses") or "",
+                        "recipient_cc": draft.get("cc_addresses") or "",
+                        "recipient_cc_addresses": draft.get("cc_addresses") or "",
+                        "recipient_bcc": draft.get("bcc_addresses") or "",
+                        "recipient_bcc_addresses": draft.get("bcc_addresses") or "",
+                        "snippet": (draft.get("body") or "").splitlines()[0]
+                        if draft.get("body")
+                        else "",
+                        "body": draft.get("body") or "",
+                        "body_links": "[]",
+                        "body_source": "draft",
+                        "body_content_type": "text/plain",
+                        "body_charset": "utf-8",
+                        "body_link_count": 0,
+                        "body_conversion_warnings": "[]",
+                        "timestamp": draft.get("updated_at"),
+                        "is_read": 1,
+                        "has_attachments": 0,
+                        "is_draft": 1,
+                        "draft_id": draft.get("id"),
+                    }
+                )
+
+            messages.sort(
+                key=lambda item: self._parse_timestamp(item.get("timestamp")),
+                reverse=True,
+            )
+            return messages
+
+    @staticmethod
+    def _parse_timestamp(raw: object) -> float:
+        """Parse message-like timestamp values for deterministic ordering."""
+        if raw is None:
+            return 0.0
+        text = str(raw).strip()
+        if not text:
+            return 0.0
+        normalized = text.replace("Z", "+00:00")
+        if "T" not in normalized and " " in normalized:
+            normalized = normalized.replace(" ", "T", 1)
+        try:
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.timestamp()
+        except Exception:
+            return 0.0
 
     def get_labels(self) -> List[dict]:
         """Return all labels from local storage."""
@@ -218,7 +439,17 @@ class DatabaseService:
         with self.get_connection() as conn:
             cursor = conn.execute(
                 """
-                SELECT l.id, l.name, l.type, COUNT(m.id) as unread_count
+                WITH DraftTotal AS (
+                    SELECT COUNT(*) AS total_drafts FROM message_drafts
+                )
+                SELECT
+                    l.id,
+                    l.name,
+                    l.type,
+                    CASE
+                        WHEN UPPER(l.id) = 'DRAFT' OR UPPER(l.name) LIKE 'DRAFT%' THEN (SELECT total_drafts FROM DraftTotal)
+                        ELSE COUNT(m.id)
+                    END as unread_count
                 FROM labels l
                 LEFT JOIN message_labels ml ON l.id = ml.label_id
                 LEFT JOIN messages m ON ml.message_id = m.id AND m.is_read = 0
@@ -227,6 +458,27 @@ class DatabaseService:
                 """
             )
             return [dict(row) for row in cursor.fetchall()]
+
+    def get_total_local_draft_count(self) -> int:
+        """Return total count of locally persisted draft messages."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS total FROM message_drafts"
+            ).fetchone()
+            return int(row["total"]) if row is not None else 0
+
+    def get_thread_draft_count(self, thread_id: str) -> int:
+        """Return count of drafts associated with the provided thread id."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM message_drafts
+                WHERE COALESCE(source_thread_id, 'draft:' || id) = ?
+                """,
+                (thread_id,),
+            ).fetchone()
+            return int(row["total"]) if row is not None else 0
 
     def get_top_contacts(self, limit: int = 50) -> List[dict]:
         """Return most frequently contacted addresses by interaction volume."""
@@ -288,6 +540,31 @@ class DatabaseService:
                 (message.id, label.id),
             )
 
+    def upsert_message_draft(
+        self, conn: sqlite3.Connection, draft: "MessageDraft"
+    ) -> None:
+        """Insert or update one message draft record."""
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO message_drafts
+            (id, mode, to_addresses, cc_addresses, bcc_addresses, subject, body, source_message_id, source_thread_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                draft.id,
+                draft.mode,
+                draft.to_addresses,
+                draft.cc_addresses,
+                draft.bcc_addresses,
+                draft.subject,
+                draft.body,
+                draft.source_message_id,
+                draft.source_thread_id,
+                draft.created_at.isoformat(),
+                draft.updated_at.isoformat(),
+            ),
+        )
+
     def upsert_contact(
         self, conn: sqlite3.Connection, email: str, name: Optional[str], timestamp: str
     ) -> None:
@@ -333,6 +610,10 @@ class DatabaseService:
     def remove_message(self, conn: sqlite3.Connection, message_id: str) -> None:
         """Delete a message row (and cascading associations)."""
         conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+
+    def remove_message_draft(self, conn: sqlite3.Connection, draft_id: str) -> None:
+        """Delete a message draft by identifier."""
+        conn.execute("DELETE FROM message_drafts WHERE id = ?", (draft_id,))
 
     def upsert_label(
         self, conn: sqlite3.Connection, label_id: str, label_name: str, label_type: str

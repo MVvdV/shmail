@@ -13,6 +13,28 @@ Arguments:
 - `$2`: optional target path
 - `$3`: optional source path
 
+Invocation safety gates (fail fast):
+1. Validate `$1` when provided:
+   - allow only `project` or `global`
+   - reject any other value and stop with correction guidance
+2. Normalize paths before resolution:
+   - trim wrapping quotes
+   - expand `~`
+   - resolve relative paths from invocation root (not transient shell cwd)
+   - canonicalize to absolute paths
+3. Validate resolved source path:
+   - must exist and be readable directory
+   - must contain framework markers: `global/` and `project/`
+   - if markers are missing, stop and request explicit source override
+4. Validate resolved target path:
+   - must be absolute after normalization
+   - parent directory must exist and be writable
+   - for `global`, target must be `~/.agent` unless user explicitly overrides during preflight
+5. Collision protection:
+   - block apply when `source == target`
+   - block apply when target is nested inside source or source nested inside target
+   - allow dry run with warning for any collision scenario
+
 Resolution rules:
 1. Resolve target scope:
    - `$1` when provided
@@ -28,14 +50,32 @@ Resolution rules:
    - current repo root for `project`
    - `~/.agent` for `global`
 
+Cross-directory behavior:
+1. Resolve invocation root in this order:
+   - nearest directory containing `.agent/system.md`
+   - nearest git repo root
+   - process cwd
+2. Resolve all relative args (`$2`, `$3`) from invocation root.
+3. Never infer source from target and never infer target from source.
+4. If invocation root and target root differ, display both explicitly in preflight.
+
 Required preflight (before any write/audit):
 - Show `target scope`, `source`, `target`, and planned writes.
+- Show validation results (`scope`, `source`, `target`, `collision`, `write access`).
 - Offer choices:
-  - `1) Proceed dry run`
-  - `2) Change target scope`
-  - `3) Change source path`
-  - `4) Change target path`
-  - `5) Cancel`
+   - `1) Proceed dry run`
+   - `2) Change target scope`
+   - `3) Change source path`
+   - `4) Change target path`
+   - `5) Cancel`
+
+Validation failure contract:
+- On any failed safety gate, return:
+  - failing gate
+  - offending value
+  - exact expected format/value
+  - single recommended fix
+- Stop before discovery, audits, or writes.
 
 Discovery + harvest phase (after preflight, before migration mapping):
 1. Discover candidate instruction files with flexible heuristics:

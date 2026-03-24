@@ -9,6 +9,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.events import Click
 from textual.message import Message
 from textual.reactive import reactive
@@ -16,6 +17,7 @@ from textual.widget import Widget
 from textual.widgets import Markdown, Static
 
 from shmail.config import settings
+from shmail.services.draft_preview import to_rendered_markdown_preview
 from shmail.services.link_policy import is_executable_href
 from shmail.services.parser import MessageParser
 
@@ -40,7 +42,12 @@ class MessageItem(Vertical):
     def __init__(self, message_data: dict, **kwargs):
         super().__init__(**kwargs)
         self.message_data = message_data
-        self._body_source = self.message_data.get("body", "*No content*")
+        self.set_class(bool(self.message_data.get("is_draft")), "-draft")
+        raw_body = str(self.message_data.get("body", "*No content*"))
+        if bool(self.message_data.get("is_draft")):
+            self._body_source = to_rendered_markdown_preview(raw_body)
+        else:
+            self._body_source = raw_body
         self._body_links = self._load_body_links()
 
     @property
@@ -79,7 +86,7 @@ class MessageItem(Vertical):
     def _markdown_parser_factory(self):
         """Build markdown parser with optional active-link marker injection."""
         active_link = self.active_link_index if self.expanded else None
-        return MessageParser.new_markdown_parser(
+        return MessageParser.create_markdown_parser(
             active_link_index=active_link,
             active_marker_prefix="【↗ ",
             active_marker_suffix=" 】",
@@ -112,7 +119,7 @@ class MessageItem(Vertical):
 
     def on_mount(self) -> None:
         """Applies initial expansion-dependent body visibility after mounting."""
-        self.watch_expanded(self.expanded)
+        self.call_after_refresh(lambda: self.watch_expanded(self.expanded))
 
     class ExpandedChanged(Message):
         """Internal notification for shortcut refresh."""
@@ -126,6 +133,11 @@ class MessageItem(Vertical):
 
     def action_toggle_expand(self) -> None:
         """Toggles expansion on keyboard activation."""
+        if bool(self.message_data.get("is_draft")):
+            action = getattr(self.screen, "action_compose_message", None)
+            if callable(action):
+                action()
+                return
         if self.expanded and self.get_active_link() is not None:
             self.open_active_link()
             return
@@ -223,50 +235,34 @@ class MessageItem(Vertical):
         """Re-renders interaction bar when active link changes."""
         self._update_interaction_bar()
         self._refresh_markdown()
-        if self.expanded:
-            self.call_after_refresh(self._scroll_active_link_into_view)
 
     def _refresh_markdown(self) -> None:
         """Refresh markdown rendering to reflect active link marker state."""
         if not self.is_mounted:
             return
-        markdown = self.query_one(".message-markdown", Markdown)
+        try:
+            markdown = self.query_one(".message-markdown", Markdown)
+        except NoMatches:
+            return
         markdown.update(self._body_source)
-
-    def _scroll_active_link_into_view(self) -> None:
-        """Scroll active markdown link block into view when possible."""
-        if not self.is_mounted or not self.expanded:
-            return
-
-        active = self.get_active_link()
-        line_start = active.get("line_start") if active else None
-        if not isinstance(line_start, int) or line_start < 0:
-            self.scroll_visible(top=False)
-            return
-
-        markdown = self.query_one(".message-markdown", Markdown)
-        for node in markdown.walk_children(with_self=False):
-            source_range = getattr(node, "source_range", None)
-            if (
-                isinstance(source_range, tuple)
-                and len(source_range) == 2
-                and isinstance(source_range[0], int)
-                and isinstance(source_range[1], int)
-                and source_range[0] <= line_start < source_range[1]
-            ):
-                scroll_visible = getattr(node, "scroll_visible", None)
-                if callable(scroll_visible):
-                    scroll_visible(top=False)
-                    return
-
-        markdown.scroll_visible(top=False)
 
     def _update_interaction_bar(self) -> None:
         """Updates compact interaction summary above markdown body."""
         if not self.is_mounted:
             return
 
-        bar = self.query_one(".message-interaction-bar", Static)
+        try:
+            bar = self.query_one(".message-interaction-bar", Static)
+        except NoMatches:
+            return
+
+        if bool(self.message_data.get("is_draft")):
+            if self.expanded:
+                bar.update("• Draft message ✎ (ENTER/C to continue composing)")
+            else:
+                bar.update("")
+            return
+
         if not self.expanded:
             bar.update("")
             return
@@ -311,19 +307,11 @@ class MessageItem(Vertical):
                             if href.startswith("mailto:")
                             else href
                         )
-                    raw_line_start = entry.get("line_start")
-                    if isinstance(raw_line_start, int):
-                        line_start: int | None = raw_line_start
-                    elif isinstance(raw_line_start, str) and raw_line_start.isdigit():
-                        line_start = int(raw_line_start)
-                    else:
-                        line_start = None
                     links.append(
                         {
                             "label": label,
                             "href": href,
                             "executable": is_executable_href(href),
-                            "line_start": line_start,
                             "kind": (
                                 str(entry.get("kind"))
                                 if entry.get("kind")
@@ -343,6 +331,16 @@ class MessageItem(Vertical):
 
     def get_shortcuts(self) -> list[tuple[str, str]]:
         """Returns the active shortcuts for the message card."""
+        if bool(self.message_data.get("is_draft")):
+            return [
+                ("ENTER", "Resume Draft"),
+                ("C", "Compose"),
+                ("J/K", "Move"),
+                ("TAB/F", "Next"),
+                ("S-TAB/F", "Prev"),
+                ("Q/ESC", "Close"),
+            ]
+
         enter_label = (
             "Open Link"
             if self.expanded and self.get_active_link()
@@ -351,6 +349,7 @@ class MessageItem(Vertical):
         if self.expanded:
             return [
                 ("ENTER", enter_label),
+                ("C", "Compose"),
                 ("J/K", "Move"),
                 ("TAB/F", "Next Link/Card"),
                 ("S-TAB/F", "Prev Link/Card"),
@@ -358,6 +357,7 @@ class MessageItem(Vertical):
             ]
         return [
             ("ENTER", enter_label),
+            ("C", "Compose"),
             ("J/K", "Move"),
             ("TAB/F", "Next"),
             ("S-TAB/F", "Prev"),

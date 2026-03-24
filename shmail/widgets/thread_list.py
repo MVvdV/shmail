@@ -26,9 +26,10 @@ class ThreadList(ListView):
         """Returns the active shortcuts for the ThreadList."""
         return [
             ("ENTER", "Read"),
+            ("C", "Compose"),
             ("J/K", "Move"),
             ("G/g", "Top/End"),
-            ("TAB", "Sidebar"),
+            ("TAB", "Labels"),
         ]
 
     @property
@@ -46,6 +47,26 @@ class ThreadList(ListView):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.current_label_id = None
+
+    def on_mount(self) -> None:
+        """Watch draft revision updates for live thread indicator refreshes."""
+        if hasattr(type(self.shmail_app), "drafts_revision"):
+            self.watch(self.shmail_app, "drafts_revision", self._on_drafts_revision)
+
+    def _on_drafts_revision(self, _revision: int) -> None:
+        """Reload current thread rows when draft state changes."""
+        if self.current_label_id:
+            self.load_threads(self.current_label_id)
+
+    def update_thread_draft_marker(self, thread_id: str, draft_count: int) -> None:
+        """Update one visible thread row draft marker without reloading list."""
+        for child in self.children:
+            if not isinstance(child, ThreadRow):
+                continue
+            if str(child.thread_data.get("thread_id", "")) != thread_id:
+                continue
+            child.set_draft_count(draft_count)
+            return
 
     def load_threads(self, label_id: str) -> None:
         """Clears the current list and loads conversations associated with the given label."""
@@ -124,8 +145,10 @@ class ThreadRow(ListItem):
         with Horizontal(classes="thread-row-item"):
             with Vertical(classes="thread-indicators"):
                 count_text = str(thread_count) if thread_count > 1 else ""
+                has_draft = bool(self.thread_data.get("has_draft"))
                 yield Static(count_text, classes="thread-count")
                 yield Static("●" if is_unread else "", classes="unread-indicator")
+                yield Static("✎" if has_draft else "", classes="draft-indicator")
 
             with Vertical(classes="thread-row-wrapper"):
                 with Horizontal(classes="thread-row-header"):
@@ -162,3 +185,13 @@ class ThreadRow(ListItem):
             return dt.strftime("%b %d, %H:%M")
         except Exception:
             return str(raw)[:16].replace("T", ", ").replace(" ", ", ")
+
+    def set_draft_count(self, draft_count: int) -> None:
+        """Update draft indicator state for this row in-place."""
+        self.thread_data["draft_count"] = draft_count
+        self.thread_data["has_draft"] = int(draft_count > 0)
+        try:
+            indicator = self.query_one(".draft-indicator", Static)
+        except Exception:
+            return
+        indicator.update("✎" if draft_count > 0 else "")

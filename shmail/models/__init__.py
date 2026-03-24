@@ -111,3 +111,19 @@ class GmailHistoryResponse(BaseModel):
     history: List[History] = Field(default_factory=list)
     historyId: str
     nextPageToken: Optional[str] = None
+
+
+class MessageDraft(BaseModel):
+    """Represents a locally persisted draft message under composition."""
+
+    id: str
+    mode: str = "new"
+    to_addresses: str = ""
+    cc_addresses: str = ""
+    bcc_addresses: str = ""
+    subject: str = ""
+    body: str = ""
+    source_message_id: Optional[str] = None
+    source_thread_id: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime

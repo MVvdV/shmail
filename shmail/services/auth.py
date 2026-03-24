@@ -5,6 +5,7 @@ import logging
 from typing import TYPE_CHECKING, Callable, Optional, cast
 
 import keyring
+from keyring.errors import PasswordDeleteError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -35,6 +36,66 @@ class AuthService:
         """Return the currently active account email from keyring."""
         active_email = keyring.get_password(self.meta_service, "active_account")
         return active_email if active_email else None
+
+    def set_active_account(self, email: str) -> None:
+        """Persist the active account pointer and track known account identity."""
+        normalized = email.strip()
+        if not normalized:
+            return
+        keyring.set_password(self.meta_service, "active_account", normalized)
+        self._record_known_account(normalized)
+
+    def list_known_accounts(self) -> list[str]:
+        """Return normalized known account emails from keyring metadata."""
+        payload = keyring.get_password(self.meta_service, "known_accounts")
+        if not payload:
+            return []
+        try:
+            raw = json.loads(payload)
+        except Exception:
+            return []
+
+        if not isinstance(raw, list):
+            return []
+
+        normalized: list[str] = []
+        for value in raw:
+            if isinstance(value, str):
+                email = value.strip()
+                if email and email not in normalized:
+                    normalized.append(email)
+        return normalized
+
+    def remove_account(self, email: str) -> None:
+        """Remove one account's token and update active/known metadata."""
+        normalized = email.strip()
+        if not normalized:
+            return
+
+        try:
+            keyring.delete_password(self.service_name, normalized)
+        except PasswordDeleteError:
+            pass
+
+        known = [item for item in self.list_known_accounts() if item != normalized]
+        keyring.set_password(self.meta_service, "known_accounts", json.dumps(known))
+
+        active = self.get_active_account()
+        if active == normalized:
+            if known:
+                keyring.set_password(self.meta_service, "active_account", known[0])
+            else:
+                try:
+                    keyring.delete_password(self.meta_service, "active_account")
+                except PasswordDeleteError:
+                    pass
+
+    def _record_known_account(self, email: str) -> None:
+        """Persist account into known-account metadata list."""
+        known = self.list_known_accounts()
+        if email not in known:
+            known.append(email)
+            keyring.set_password(self.meta_service, "known_accounts", json.dumps(known))
 
     def _update_status(self, message: str, progress: Optional[float] = None) -> None:
         """Log and forward a progress update to the callback."""
@@ -80,7 +141,7 @@ class AuthService:
         """Store refresh token and active-account pointer in keyring."""
         if creds.refresh_token:
             keyring.set_password(self.service_name, email, creds.refresh_token)
-            keyring.set_password(self.meta_service, "active_account", email)
+            self.set_active_account(email)
         else:
             raise ValueError("No refresh token returned from Google.")
 

@@ -5,11 +5,12 @@
 - [x] Phase 2: Gmail API & Sync (Tickets 2.1 - 2.6)
 - [x] Phase 3: TUI Scaffolding (Tickets 3.1 - 3.9)
 - [x] Phase 4: Reading & Search (Tickets 4.1, 4.5, 4.7, 4.8, 4.9 complete)
+- [~] Phase 5: Composition & Offline (5.1 and 5.2 local-first slices implemented; outbound/provider sync pending)
 
-## Session State (Last Handover: Mar 20 2026)
-- **Last Action**: Completed parser/viewer parity refinements (shared markdown parser contract, no link collapsing, active-link in-body marker, accordion thread behavior, and active-link scroll sync for long messages).
-- **Next Step**: Run real-inbox regression validation on long transactional threads and decide whether to add optional symbol mapping for image-link labels (parked idea) as a standalone UX enhancement ticket.
-- **Blockers**: None.
+## Session State (Last Handover: Mar 24 2026)
+- **Last Action**: Replaced compose-close global redraws with targeted `MessageDraftCloseUpdate` callbacks, refreshed only affected thread/list nodes, and unified draft preview newline rendering via shared `to_rendered_markdown_preview` normalization.
+- **Next Step**: Implement unsaved-discard confirmation UX in `MessageDraftScreen` and validate compose flows (`new`, `reply`, `reply all`, `forward`) against real-inbox behavior to close Ticket 5.1 remaining polish.
+- **Blockers**: Outbound mutation architecture is not yet defined (queue/idempotency/reconcile) and must precede provider sync-back.
 
 ## Granular Tickets (Migrated)
 
@@ -68,10 +69,10 @@
 - [x] **Ticket 3.1**: Create `app.py` and base `ShmailApp` with `shmail.tcss`.
 - [x] **Ticket 3.2**: Implement `LoginScreen` (OAuth trigger and Welcome splash).
 - [x] **Ticket 3.3**: Implement `LoadingScreen` (DB Initialization & Progress feedback).
-- [x] **Ticket 3.4**: Implement `MainScreen` (Container for Sidebar & EmailList).
-- [x] **Ticket 3.5**: Implement `Sidebar` widget (Label navigation).
-- [x] **Ticket 3.6**: Implement `EmailList` widget (Message snippets).
-- [x] **Ticket 3.7**: Implement Resizable Sidebar (Mouse drag & Keyboard shortcuts).
+- [x] **Ticket 3.4**: Implement `MainScreen` (container for Labels sidebar and Threads list).
+- [x] **Ticket 3.5**: Implement `LabelsSidebar` widget (Labels navigation).
+- [x] **Ticket 3.6**: Implement `ThreadList` widget (Threads snippets).
+- [x] **Ticket 3.7**: Implement resizable Labels sidebar (mouse drag & keyboard shortcuts).
 - [x] **Ticket 3.8**: Implement `StatusBar` (Global async process feedback).
 - [x] **Ticket 3.9**: Implement Advanced Navigation & Config-Driven Bindings (Arrows, Focus, Config).
 
@@ -127,8 +128,29 @@
         - Current model delivers better reliability: Markdown display output + persisted interaction index.
 
 ### Phase 5: Composition & Offline
-- [ ] **Ticket 5.1**: Implement `ComposeScreen` (TextArea + Recipient inputs).
-- [ ] **Ticket 5.2**: Implement `DraftService` (Local auto-save + Gmail sync).
+- [ ] **Ticket 5.1**: Implement `MessageDraftScreen` modal (draft message authoring).
+    - **Goal**: Compose and reply in a modal flow consistent with thread viewer interaction patterns.
+    - **Scope**:
+        - Use `ModalScreen` container structure parallel to `ThreadMessagesScreen`, including dedicated shortcut footer.
+        - Add editable header fields (`To`, `Cc`, `Bcc`, `Subject`) styled with message-header visual language while using real input widgets.
+        - Add body tabs: `Edit` (TextArea) and `Preview` (read-only Markdown view).
+        - Add entry points: `c` from `MainScreen` for empty draft message, `c` from `ThreadMessagesScreen` for reply seeded from focused message.
+        - Reserve `Tab`/`Shift+Tab` for deterministic field traversal within compose; add dedicated tab-switch bindings for body mode (`ctrl+tab` / `shift+ctrl+tab`).
+    - **Acceptance Criteria**:
+        - Compose modal opens from both entry points with deterministic focus behavior.
+        - Reply draft prefill uses selected message context and preserves quote semantics.
+        - Keyboard workflow is explicit: field traversal does not conflict with Edit/Preview mode switching.
+    - **Status Notes (Mar 24 2026)**:
+        - Implemented: modal shell, editable address/header fields, edit/preview tabs, footer shortcuts, main/thread entry points.
+        - Implemented: thread compose chooser (`Reply`, `Reply all`, `Forward`) wired to focused message seed.
+        - Remaining: unsaved-discard confirmation UX and final copy/shortcut refinement from real-inbox validation.
+- [ ] **Ticket 5.2**: Implement `MessageDraftService` (Local auto-save + provider sync later).
+    - **Planning Notes**:
+        - Local SQLite durability is phase-one requirement; provider draft sync is deferred until send/mutation contract is stable.
+        - Naming contract: use `MessageDraft` domain model and avoid generic `compose_*` persistence names.
+    - **Status Notes (Mar 24 2026)**:
+        - Implemented (5.2a Local): `message_drafts` table, DB CRUD, `MessageDraft` model, service-layer persistence, debounced autosave, explicit save.
+        - Deferred (5.2b Provider): provider draft sync and remote conflict resolution now depend on Ticket 5.7 mutation contract.
 - [ ] **Ticket 5.3**: Implement `ActionQueue` (Local queuing of archive/delete actions).
 - [ ] **Ticket 5.4**: Implement `ConnectivityMonitor` (Status bar heartbeats).
 - [ ] **Ticket 5.5**: `MarkdownInputAdapter` for Composer (Optional Authoring Format).
@@ -148,6 +170,40 @@
     - **Acceptance Criteria**:
         - Reply/forward outputs are readable in compose and visually coherent in thread viewer.
         - Compose-to-send pipeline remains deterministic across providers.
+- [ ] **Ticket 5.7**: Message Mutation Sync Contract (Holistic Local↔Provider Reconciliation).
+    - **Goal**: Define robust synchronization semantics for outbound and local mutations beyond fetch-only sync.
+    - **Scope**:
+        - Normalize mutation pipeline for send, draft save/delete, read/unread state, label changes, and archive/trash operations.
+        - Specify ordering/idempotency and conflict-resolution rules between local queue state and provider state.
+        - Ensure mutation model remains provider-neutral and feeds Ticket 7.2 send abstraction.
+        - Add local mutation log schema with operation state machine (`pending`, `in_flight`, `acked`, `failed`) and retry metadata.
+        - Add deterministic replay worker semantics (claim, execute, ack/fail, retry/backoff, crash-safe resume).
+        - Add user-visible reconcile status surfaces for partial success/failure recovery.
+    - **Research/Considerations**:
+        - Gmail threading and submission behavior for replies (`In-Reply-To`, `References`, `threadId`) and retry semantics.
+        - Failure recovery model (partial success, offline replay, and user-visible reconciliation status).
+        - Account-scoping constraints with Ticket 7.1 to avoid cross-account mutation bleed.
+        - Mid-sync connection loss behavior must preserve local intent without duplicating provider mutations.
+- [ ] **Ticket 5.9**: Outbound Idempotency Contract.
+    - **Goal**: Guarantee at-least-once local replay does not create duplicate provider-side effects.
+    - **Scope**:
+        - Define idempotency-key strategy per mutation type (`send`, `draft_save`, `draft_delete`, `label_update`, `read_state`, `archive_trash`).
+        - Define duplicate-detection and safe retry behavior for network timeout/unknown-result outcomes.
+        - Define deterministic key derivation inputs and retention window in local metadata.
+    - **Acceptance Criteria**:
+        - Retried operations after connection loss are logically idempotent.
+        - No duplicate sends/drafts under replay scenarios in integration tests.
+- [ ] **Ticket 5.8**: Thread Compose Action Chooser.
+    - **Goal**: Provide explicit compose intent selection when launching from thread context.
+    - **Scope**:
+        - On `c` from `ThreadMessagesScreen`, open a lightweight action chooser (`Reply`, `Reply all`, `Forward`).
+        - Seed `MessageDraft` from focused message according to selected action.
+        - Keep chooser keyboard-only friendly and aligned with existing modal shortcut presentation.
+        - Keep chooser as a bounded pre-compose step that forwards selected intent into `MessageDraftScreen` creation (no direct send side effects).
+    - **Research/Considerations**:
+        - Recipient derivation rules (`Reply` vs `Reply all`) and exclusion of current account address.
+        - Subject normalization policy (`Re:` / `Fwd:` de-duplication).
+        - Focus return behavior when chooser is cancelled.
 
 ### Phase 7: Protocol Expansion & Account Federation
 - [ ] **Ticket 7.1**: Provider Registry + Account Routing.
@@ -155,11 +211,28 @@
     - **Scope**:
         - Register provider implementation per account identity.
         - Route sync/auth/send operations through provider-specific service from a shared app registry.
+        - Add an account registry abstraction to enumerate known identities for header account selection.
+        - Namespace account runtime state (`auth`, `sync_service`, timers, `history_id`) and prevent cross-account cache mixing.
+        - Define account-switch transaction semantics (cancel workers, flush screen state, swap provider context, rehydrate UI).
+        - Namespace outbound mutation logs and cursors per account identity before enabling active account switching.
+    - **Implementation Planning Notes (Mar 23 2026)**:
+        - Header account `Select` now lists real known account emails from keyring metadata plus account actions.
+        - Selecting a different email is intentionally blocked with a warning until 7.1 cache/runtime isolation is complete.
+        - Activation criteria for account switching: account-scoped DB/cache, account-scoped sync state, deterministic screen reset contract.
 - [ ] **Ticket 7.2**: Protocol-Specific Send Pipeline Abstraction.
     - **Goal**: Normalize sending flow across Gmail API, IMAP/SMTP, and JMAP Submission.
     - **Scope**:
         - Add send capability interface and provider adapters.
-        - Preserve draft/reply/forward behavior through a protocol-neutral compose model.
+        - Preserve draft/reply/forward behavior through a protocol-neutral `MessageDraft` compose model.
+        - Require adapter parity with Ticket 5.7/5.9 mutation and idempotency contracts (not provider-specific ad-hoc writes).
+
+### Cross-Phase Execution Order (Sync-Back Readiness)
+- [ ] **Sequence A**: Complete compose UX stabilization (`5.1` remaining polish + real-inbox validation).
+- [ ] **Sequence B**: Finalize local draft durability behavior and edge conditions (`5.2` completion criteria).
+- [ ] **Sequence C**: Implement mutation log + replay worker + reconcile UX (`5.7`).
+- [ ] **Sequence D**: Implement outbound idempotency guarantees and failure-replay tests (`5.9`).
+- [ ] **Sequence E**: Wire Gmail write-back through provider adapter under the mutation contract (`7.2`).
+- [ ] **Sequence F**: Enable multi-account switching only after account-scoped cursors/mutations are complete (`7.1`).
 
 ## Implementation Notes (Locked Decisions)
 - Viewer runtime path uses Markdown display text for rendering and persisted `messages.body_links` derived from the rendered body as the deterministic interaction index.
@@ -167,8 +240,10 @@
 - Link UX is explicit and safe: disallowed schemes remain visible/selectable, display `[blocked]` status, and produce a user-facing warning on activation attempt.
 - Canonical interaction links preserve markdown token order and duplicates; collapsing links by label/href is disabled to match actual interactive token behavior.
 - Message-body visibility is CSS-driven (`MessageItem.-expanded`) and thread navigation enforces strict accordion behavior (one expanded message at a time).
-- Active-link visibility in long content uses persisted `line_start` metadata mapped against rendered markdown block `source_range` for scroll-into-view synchronization.
+- Active-link auto-scroll is intentionally disabled; link traversal favors deterministic focus/highlight behavior over implicit viewport movement.
 - Active keyboard link selection is rendered in-body via parser token injection using `【↗ label 】` inside the active link token.
+- Thread viewer/link highlighting determinism is precedence-critical: traversal state (`active_link_index`) and in-body marker rendering must remain synchronized through a single markdown refresh cycle; avoid geometry-heavy or container-coupled scroll rewrites that depend on transient markdown child layout.
+- Any future viewport-follow behavior must be treated as a standalone redesign ticket with explicit acceptance criteria and real-inbox validation; avoid incremental scroll patches in the current traversal path.
 
 ### Phase 6: Polish & Distribution
 - [ ] **Ticket 6.1**: Implement `ThemingEngine`.
@@ -176,6 +251,12 @@
 - [ ] **Ticket 6.3**: Configure GitHub Actions for CI/CD and PyInstaller builds.
 - [ ] **Ticket 6.4**: UI Performance & Error Resilience Refinement.
 - [ ] **Ticket 6.5**: Implement Graceful Logout & Session Reset (`shmail --logout`).
+    - **Planning Notes**:
+        - Header account dropdown now exposes live actions (`Sign out of this account`, `Sign in another account`) and real known account emails.
+        - Logout action must revoke/clear active-account pointer in keyring and reset in-memory app identity before returning to login/loading.
+        - If multiple accounts are persisted, logout should support current-account-only removal versus global credential wipe with explicit confirmation UX.
+        - Updated header labels: `Sign out of this account` and `Sign in another account`; both are active in current runtime.
+        - Sign-out currently removes the selected account token + active pointer and routes user to login; follow-up needed for cache/session purge semantics.
 - [ ] **Ticket 6.6**: Cursor & Mouse Interaction Support (Hover states, custom cursors).
 - [ ] **Ticket 6.7**: Semantic Versioning & Automated Build Pipeline.
 - [ ] **Ticket 6.8**: Professional Packaging & Installation (`pip install`, `uv tool`, `brew`).
@@ -183,7 +264,7 @@
 ## Handoff Log
 - [Feb 20 2026]: Established production-grade TUI architecture. Keyring storage finalized. Ready for LoadingScreen progress bar integration.
 - [Mar 11 2026]: Completed Ticket 3.3 (LoadingScreen Refinement). Architected the "Centralized Orchestration" pattern. ShmailApp now manages background workers (DB init + Sync) while LoadingScreen acts as a reactive view. Codified Production-Grade and In-File Documentation mandates into the project context and Tutor persona.
-- [Mar 11 2026 (Evening)]: Optimized Startup sequence with "Discovery-First" Keyring logic. Resolved frozen UI and redundant sync issues using thread-safe `call_from_thread` bridges. Finalized Phase 3 (Resizable Sidebar) and started Phase 4 (EmailViewer with Vim navigation). Upgraded project to Python 3.14.
+- [Mar 11 2026 (Evening)]: Optimized Startup sequence with "Discovery-First" Keyring logic. Resolved frozen UI and redundant sync issues using thread-safe `call_from_thread` bridges. Finalized Phase 3 (Resizable Labels sidebar) and started Phase 4 (EmailViewer with Vim navigation). Upgraded project to Python 3.14.
 - [Mar 14 2026]: Completed Conversation Threading (Ticket 4.1). Implemented a Modal Screen architecture for the thread viewer with a scrollable stack of message cards. Performed a massive Semantic Refactor: "Email" is now for addresses, "Message" for items, and "Thread" for conversations. Established a modular HTML-to-Markdown parser using `html2text`. Stabilized TUI navigation and dynamic shortcut footers. Documented link-interaction blockers in Ticket 4.7.
 - [Mar 18 2026]: Migrated to framework v2 runtime model (`/` workflows + `@` subagents). Preserved existing system constraints (absolute git prohibition, roadmap sovereignty, cooperative tutor behavior) and retained full context/roadmap history.
 - [Mar 19 2026]: Locked Ticket 4.7 keyboard interaction contract for robust mouse-free navigation: `Tab/f` forward traversal, `Shift+Tab/F` reverse traversal, `j/k` card-level override, and `Enter` link activation with no focus-state mutation on return.
@@ -191,10 +272,19 @@
 - [Mar 19 2026 (Correction)]: Session-close handoff entry above was stale. Active direction is implemented Markdown display rendering with persisted `body_links` interaction indexing. Ticket 4.10 is archived unless explicitly re-opened.
 - [Mar 20 2026]: Replaced HTML conversion dependency with `inscriptis` and removed HTML-anchor merge fallback from runtime parsing. Canonical `body_links` now derive from rendered body content and drive both keyboard traversal and guarded mouse activation.
 - [Mar 20 2026]: Simplified parser pipeline by removing regex-based URL/email extraction and legacy plain/html split-link paths. Canonical links are extracted from rendered body markdown tokens (`markdown-it` GFM + linkify) to keep mouse and keyboard interaction parity.
-- [Mar 20 2026]: Hardened application/runtime orchestration: sidebar and thread list DB reads now run via workers, bootstrap status restoration is applied through thread-safe UI updates, periodic sync scheduling is gated to successful session initialization, and sync error handling is surfaced through status updates.
+- [Mar 20 2026]: Hardened application/runtime orchestration: Labels sidebar and Threads list DB reads now run via workers, bootstrap status restoration is applied through thread-safe UI updates, periodic sync scheduling is gated to successful session initialization, and sync error handling is surfaced through status updates.
 - [Mar 20 2026]: Improved sync/data hygiene by pruning stale labels during label refresh and correcting incremental `added` metrics to count only successfully fetched+parsed messages.
 - [Mar 20 2026 (Session Close)]: Session workflow executed. Roadmap session state refreshed and next execution target fixed on `Ticket 4.8` regression validation (rendering quality + keyboard/link contract stability).
 - [Mar 20 2026]: Removed canonical link collapsing and aligned extraction/rendering on one shared markdown parser contract (`gfm-like`), including kind metadata for lightweight link-type hints.
 - [Mar 20 2026]: Added active-link visual marker injection (`【↗ label 】`) inside link tokens and kept mouse/keyboard interaction parity against persisted canonical links.
 - [Mar 20 2026]: Implemented strict accordion thread behavior with CSS-driven collapsed state defaults and Textual lifecycle-safe initial thread mount/show reconciliation.
 - [Mar 20 2026]: Added active-link scroll synchronization for long messages using persisted `line_start` metadata and markdown block `source_range` matching.
+- [Mar 23 2026]: Attempted two scroll-sync rewrites (`thread-stack.scroll_to_widget` child-targeting and owner-translated line-region scrolling) were reverted after they destabilized tab/highlight behavior. Locked guidance: preserve deterministic tab/link contract by keeping the original minimal sync model (line metadata + block match + lightweight visibility) and reject speculative scroll architecture changes without explicit redesign scope.
+- [Mar 23 2026]: Removed active-link auto-scroll implementation and parser `line_start` link metadata emission after repeated regressions (viewport jumps/no-op behavior) interfered with deterministic tab traversal and highlight stability. Current behavior is intentionally no auto-scroll on link traversal.
+- [Mar 24 2026]: Implemented Compose foundation slice: introduced `MessageDraftScreen` modal shell (editable header fields + Edit/Preview body tabs + compose footer), added compose keybindings (`c` entrypoint, dedicated compose tab-switch bindings), and added thread-context compose chooser (`Reply`, `Reply all`, `Forward`) that seeds draft context from focused message without introducing send-side effects.
+- [Mar 24 2026]: Implemented Ticket 5.2 local-first draft persistence slice: added `message_drafts` SQLite table and DB operations, introduced `MessageDraft` model + `MessageDraftService`, wired debounced autosave (`0.8s`) and explicit save (`Ctrl+S`) into `MessageDraftScreen`, and added service/UI persistence tests. Provider draft sync remains deferred.
+- [Mar 24 2026]: Applied compose feedback fixes: draft-backed threads now surface under `DRAFT` label with thread-level draft indicators (`✎`), thread messages include synthetic draft cards that resume compose from context, compose preview parser now preserves single-line breaks (`breaks=True`), compose tab switching gained terminal-safe fallbacks (`alt+left/right`) while tab-strip focus is disabled, and forward template was normalized to a cleaner markdown header block.
+- [Mar 24 2026]: Stabilized draft-thread integration: fixed mixed naive/aware timestamp sorting crash in thread message merge, added reactive draft-revision refresh propagation so thread draft markers update without label switching, and updated label counting semantics so `DRAFT` displays total local draft count while other labels remain unread-message counts.
+- [Mar 24 2026]: Hardened compose/draft UX determinism: removed per-autosave global redraw signaling (revision emitted once on compose close), added explicit draft-card semantics in thread viewer (`Draft message ✎`, warning border/subject accent, `ENTER` => `Resume Draft`), and normalized compose preview rendering to preserve single newlines for plain/quote text while preserving fenced-code blocks.
+- [Mar 24 2026]: Replaced compose-close global redraws with targeted close-callback updates (`MessageDraftCloseUpdate`) so only affected UI nodes refresh (DRAFT label count + impacted thread row/current thread). Added shared draft preview normalizer (`to_rendered_markdown_preview`) used by compose preview and draft message cards to keep newline behavior consistent.
+- [Mar 24 2026 (Session Close)]: Executed session-close workflow. Updated roadmap session state to the targeted compose-polish finish line and fixed the next execution step on unsaved-discard confirmation + real-inbox compose validation for Ticket 5.1 closure.

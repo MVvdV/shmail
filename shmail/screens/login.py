@@ -43,6 +43,7 @@ class LoginScreen(Screen):
             try:
                 email = await worker.wait()
                 self.shmail_app.status_message = f"Success! Logged in as {email}"
+                self.shmail_app.email = email
 
                 self.shmail_app.switch_screen(LoadingScreen())
                 await self.shmail_app.initialize_session(email)

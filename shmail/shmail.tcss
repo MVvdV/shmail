@@ -5,6 +5,7 @@ $surface: #24283b;
 $text: #a9b1d6;
 $success: #9ece6a;
 $error: #f7768e;
+$warning: #ff9e64;
 
 /* Global */
 * {
@@ -47,6 +48,37 @@ AppFooter {
     color: $primary;
 }
 
+#app-account-hint {
+    width: 1fr;
+    height: 1;
+    layout: horizontal;
+    align: right middle;
+    padding-right: 1;
+}
+
+#app-account-hint .shortcut-key {
+    padding-left: 0;
+}
+
+#app-account-select {
+    width: auto;
+    min-width: 24;
+    max-width: 52;
+    padding: 0 2 0 0;
+    color: $text 70%;
+}
+
+#app-account-select > SelectCurrent {
+    border: none;
+    background: transparent;
+}
+
+#app-account-select > SelectCurrent > Static#label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-wrap: nowrap;
+}
+
 #app-version,
 #thread-version {
     width: auto;
@@ -86,19 +118,19 @@ AppFooter {
     padding-left: 1;
 }
 
-/* Sidebar */
-#sidebar {
+/* Labels sidebar */
+#labels-sidebar {
     width: 30;
     height: 100%;
     border-right: solid $secondary;
 }
 
-#sidebar-list {
+#labels-sidebar-list {
     background: transparent;
     overflow-x: hidden;
 }
 
-#sidebar-list:focus {
+#labels-sidebar-list:focus {
     scrollbar-color: $primary;
 }
 
@@ -139,29 +171,29 @@ LabelItem.selected .label-count {
     text-style: bold;
 }
 
-#sidebar ListView > ListItem.-highlight {
+#labels-sidebar ListView > ListItem.-highlight {
     background: transparent;
 }
 
-#sidebar ListView:focus > ListItem.-highlight {
+#labels-sidebar ListView:focus > ListItem.-highlight {
     background: $surface;
 }
 
-#sidebar ListView:focus > ListItem.-highlight .label-name,
-#sidebar ListView:focus > ListItem.-highlight .label-count {
+#labels-sidebar ListView:focus > ListItem.-highlight .label-name,
+#labels-sidebar ListView:focus > ListItem.-highlight .label-count {
     color: $primary;
     text-style: bold;
 }
 
 /* Thread list */
-#thread-list {
+#threads-list {
     width: 1fr;
     height: 100%;
     background: transparent;
     overflow-x: hidden;
 }
 
-#thread-list:focus {
+#threads-list:focus {
     scrollbar-color: $primary;
 }
 
@@ -190,6 +222,14 @@ LabelItem.selected .label-count {
     width: 100%;
     content-align: center middle;
     color: $primary;
+}
+
+.draft-indicator {
+    height: 1;
+    width: 100%;
+    content-align: center middle;
+    color: $warning;
+    text-style: bold;
 }
 
 .thread-row-wrapper {
@@ -243,18 +283,18 @@ LabelItem.selected .label-count {
     text-wrap: nowrap;
 }
 
-#thread-list > ListItem.-highlight {
+#threads-list > ListItem.-highlight {
     background: transparent;
 }
 
-#thread-list:focus > ListItem.-highlight {
+#threads-list:focus > ListItem.-highlight {
     background: $surface;
     color: $primary;
     text-style: bold;
 }
 
 /* Thread viewer modal */
-ThreadViewerScreen {
+ThreadMessagesScreen {
     align: center middle;
     background: rgba(0, 0, 0, 0.5);
 }
@@ -291,6 +331,102 @@ ThreadViewerScreen {
     color: $text 80%;
 }
 
+/* Message draft modal */
+MessageDraftScreen,
+ThreadComposeActionChooserScreen {
+    align: center middle;
+    background: rgba(0, 0, 0, 0.5);
+}
+
+#message-draft-modal-container {
+    width: 100%;
+    max-width: 112;
+    height: 100%;
+    margin: 2 4;
+    background: $surface;
+}
+
+#message-draft-header-fields {
+    height: auto;
+    padding: 1 2;
+    border-bottom: solid $background;
+}
+
+#message-draft-header-fields Input {
+    margin-bottom: 1;
+}
+
+#message-draft-body-tabs {
+    width: 1fr;
+    height: 1fr;
+    padding: 0 2 1 2;
+}
+
+#message-draft-editor,
+#message-draft-preview {
+    width: 1fr;
+    height: 1fr;
+    background: $background;
+}
+
+#message-draft-footer {
+    width: 1fr;
+    height: 1;
+    background: $surface;
+}
+
+#message-draft-version {
+    width: auto;
+    padding: 0 2;
+}
+
+#message-draft-shortcuts {
+    width: 1fr;
+    height: 1;
+    layout: horizontal;
+    align: right middle;
+    padding: 0 2;
+}
+
+/* Thread compose action chooser */
+#thread-compose-action-modal {
+    width: 60;
+    height: auto;
+    max-height: 20;
+    background: $surface;
+    border: round $secondary;
+    padding: 1 1 0 1;
+}
+
+#thread-compose-action-title {
+    width: 1fr;
+    padding: 0 1 1 1;
+    color: $primary;
+    text-style: bold;
+}
+
+#thread-compose-action-list {
+    width: 1fr;
+    height: auto;
+    max-height: 10;
+    background: transparent;
+}
+
+#thread-compose-action-list:focus > ListItem.-highlight {
+    background: $background;
+    color: $primary;
+    text-style: bold;
+}
+
+#thread-compose-action-shortcuts {
+    width: 1fr;
+    height: 1;
+    layout: horizontal;
+    align: right middle;
+    padding: 0 1;
+    margin-top: 1;
+}
+
 /* Message card */
 MessageItem {
     width: 100%;
@@ -304,6 +440,14 @@ MessageItem:focus {
     border: solid $primary;
 }
 
+MessageItem.-draft {
+    border: solid $warning 50%;
+}
+
+MessageItem.-draft:focus {
+    border: solid $warning;
+}
+
 .message-header-container {
     height: auto;
     padding: 0 2;
@@ -312,6 +456,10 @@ MessageItem:focus {
 .message-subject {
     color: $primary;
     text-style: bold;
+}
+
+MessageItem.-draft .message-subject {
+    color: $warning;
 }
 
 .message-from,
@@ -331,6 +479,10 @@ MessageItem:focus {
     color: $secondary;
     text-style: italic;
     display: none;
+}
+
+MessageItem.-draft .message-interaction-bar {
+    color: $warning;
 }
 
 .message-markdown {
@@ -355,42 +507,11 @@ Markdown {
     color: $text;
 }
 
-Markdown > BlockQuote {
-    margin: 1 0;
-    padding: 0 1;
-    border-left: solid $secondary;
-    background: $surface;
-}
-
-Markdown > H1,
-Markdown > H2,
-Markdown > H3,
-Markdown > H4 {
-    margin: 1 0;
-    color: $primary;
-    text-style: bold;
-}
-
-Markdown > CodeBlock {
-    margin: 1 0;
-    background: $surface;
-    color: $success;
-}
-
 Markdown > Link {
     color: $secondary;
-    text-style: underline;
 }
 
-Markdown > Strong {
-    color: $secondary;
-    text-style: bold;
-}
-
-Markdown > Emph {
-    text-style: italic;
-}
-
-Markdown > HorizontalRule {
-    color: #565f89;
+MarkdownBlockQuote {
+    border-left: outer $secondary 60%;
+    background: $surface 30%;
 }
