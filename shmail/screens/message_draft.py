@@ -11,6 +11,8 @@ from textual.screen import ModalScreen
 from textual.widgets import (
     Input,
     Markdown,
+    ListItem,
+    ListView,
     Static,
     TabPane,
     TabbedContent,
@@ -23,6 +25,11 @@ from shmail.models import MessageDraft
 from shmail.services.draft_preview import to_rendered_markdown_preview
 from shmail.services.message_draft import MessageDraftService
 from shmail.services.parser import MessageParser
+from shmail.widgets.shortcuts import (
+    ShortcutFooter,
+    binding_choices_label,
+    movement_pair_label,
+)
 
 
 @dataclass
@@ -49,28 +56,130 @@ class MessageDraftCloseUpdate:
     source_thread_id: str | None
 
 
-class MessageDraftFooter(Horizontal):
-    """Compose footer bar displaying keyboard shortcuts for draft workflow."""
+class DraftDiscardActionItem(ListItem):
+    """List row representing one discard-confirmation action."""
+
+    def __init__(self, action_value: str, label: str) -> None:
+        super().__init__()
+        self.action_value = action_value
+        self.label = label
 
     def compose(self) -> ComposeResult:
-        """Render version and dynamic shortcut row."""
-        yield Static("v0.1.0", id="message-draft-version")
-        yield Horizontal(id="message-draft-shortcuts")
+        """Render discard action label."""
+        yield Static(self.label, markup=False)
 
-    def update_shortcuts(self, shortcuts: list[tuple[str, str]]) -> None:
-        """Update compose shortcut labels in the footer."""
-        container = self.query_one("#message-draft-shortcuts", Horizontal)
-        container.remove_children()
 
-        widgets = []
-        for index, (key, label) in enumerate(shortcuts):
-            if index > 0:
-                widgets.append(Static("•", classes="shortcut-separator"))
-            widgets.append(Static(key, classes="shortcut-key", markup=False))
-            widgets.append(Static(label, classes="shortcut-label", markup=False))
+class MessageDraftDiscardConfirmScreen(ModalScreen[str | None]):
+    """Modal confirmation screen for unresolved compose changes."""
 
-        if widgets:
-            container.mount(*widgets)
+    BINDINGS = [
+        Binding(settings.keybindings.close, "keep_editing", "Keep Editing", show=False),
+        Binding(settings.keybindings.up, "cursor_up", "Previous Action", show=False),
+        Binding(settings.keybindings.down, "cursor_down", "Next Action", show=False),
+        Binding(
+            settings.keybindings.select, "select_action", "Select Action", show=False
+        ),
+        Binding("ctrl+s", "save_and_close", "Save and Close", show=False),
+        Binding("d", "discard", "Discard", show=False),
+        Binding("x", "delete_draft", "Delete Draft", show=False),
+    ]
+
+    def __init__(self, *, can_delete: bool) -> None:
+        super().__init__()
+        self.can_delete = can_delete
+
+    def compose(self) -> ComposeResult:
+        """Render save-or-discard confirmation copy, actions, and shortcuts."""
+        select_key = binding_choices_label(settings.keybindings.select, "ENTER")
+        close_key = binding_choices_label(settings.keybindings.close, "Q/ESC")
+        move_key = movement_pair_label(
+            settings.keybindings.up, settings.keybindings.down
+        )
+        with Vertical(id="message-draft-discard-modal"):
+            yield Static("Save or discard changes?", id="message-draft-discard-title")
+            yield Static(
+                "Close now, keep editing, or discard the unsaved changes in this draft.",
+                id="message-draft-discard-body",
+                markup=False,
+            )
+            yield ListView(
+                DraftDiscardActionItem("save", "Save and close"),
+                DraftDiscardActionItem("keep", "Keep editing"),
+                DraftDiscardActionItem("discard", "Discard edits"),
+                *(
+                    [DraftDiscardActionItem("delete", "Delete draft")]
+                    if self.can_delete
+                    else []
+                ),
+                id="message-draft-discard-list",
+            )
+            with Horizontal(id="message-draft-discard-shortcuts"):
+                yield Static(select_key, classes="shortcut-key", markup=False)
+                yield Static("Choose", classes="shortcut-label", markup=False)
+                yield Static("•", classes="shortcut-separator")
+                yield Static(move_key, classes="shortcut-key", markup=False)
+                yield Static("Move", classes="shortcut-label", markup=False)
+                yield Static("•", classes="shortcut-separator")
+                yield Static("CTRL+S", classes="shortcut-key", markup=False)
+                yield Static("Save", classes="shortcut-label", markup=False)
+                yield Static("•", classes="shortcut-separator")
+                yield Static("D", classes="shortcut-key", markup=False)
+                yield Static("Discard", classes="shortcut-label", markup=False)
+                if self.can_delete:
+                    yield Static("•", classes="shortcut-separator")
+                    yield Static("X", classes="shortcut-key", markup=False)
+                    yield Static("Delete", classes="shortcut-label", markup=False)
+                yield Static("•", classes="shortcut-separator")
+                yield Static(close_key, classes="shortcut-key", markup=False)
+                yield Static("Keep", classes="shortcut-label", markup=False)
+
+    def on_mount(self) -> None:
+        """Initialize confirmation focus and default selection."""
+        action_list = self.query_one("#message-draft-discard-list", ListView)
+        action_list.index = 0
+        action_list.focus()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Dismiss confirmation modal with selected intent."""
+        if isinstance(event.item, DraftDiscardActionItem):
+            self.dismiss(event.item.action_value)
+
+    def action_cursor_up(self) -> None:
+        """Move confirmation selection up."""
+        self.query_one("#message-draft-discard-list", ListView).action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        """Move confirmation selection down."""
+        self.query_one("#message-draft-discard-list", ListView).action_cursor_down()
+
+    def action_select_action(self) -> None:
+        """Activate the currently highlighted confirmation action."""
+        self.query_one("#message-draft-discard-list", ListView).action_select_cursor()
+
+    def action_keep_editing(self) -> None:
+        """Dismiss confirmation and return to compose editor."""
+        self.dismiss("keep")
+
+    def action_save_and_close(self) -> None:
+        """Dismiss confirmation and persist before closing compose."""
+        self.dismiss("save")
+
+    def action_discard(self) -> None:
+        """Dismiss confirmation and discard current compose edits."""
+        self.dismiss("discard")
+
+    def action_delete_draft(self) -> None:
+        """Dismiss confirmation and delete the entire draft."""
+        if self.can_delete:
+            self.dismiss("delete")
+
+
+class MessageDraftFooter(ShortcutFooter):
+    """Compose footer bar displaying keyboard shortcuts for draft workflow."""
+
+    version_id = "message-draft-version"
+    shortcuts_id = "message-draft-shortcuts"
+    show_version = False
 
 
 class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
@@ -79,15 +188,9 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
     BINDINGS = [
         Binding(settings.keybindings.close, "close", "Close", show=False),
         Binding(
-            settings.keybindings.compose_tab_next,
-            "next_body_tab",
-            "Next Body Tab",
-            show=False,
-        ),
-        Binding(
-            settings.keybindings.compose_tab_prev,
-            "prev_body_tab",
-            "Previous Body Tab",
+            settings.keybindings.compose_preview_toggle,
+            "toggle_body_tab",
+            "Toggle Body Tab",
             show=False,
         ),
         Binding("ctrl+s", "save_draft", "Save Draft", show=False),
@@ -98,9 +201,14 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
         self.seed = seed or MessageDraftSeed()
         self._draft_service: MessageDraftService | None = None
         self._draft: MessageDraft | None = None
+        self._opened_draft_snapshot: MessageDraft | None = None
+        self._persisted_draft_snapshot: MessageDraft | None = None
         self._draft_dirty = False
         self._autosave_timer = None
         self._dirty_since_open = False
+        self._created_draft_on_open = False
+        self._discard_requested = False
+        self._suspend_change_tracking = False
 
     def compose(self) -> ComposeResult:
         """Render message draft fields, body mode tabs, and shortcut footer."""
@@ -133,18 +241,19 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
 
     def on_mount(self) -> None:
         """Initialize focus and footer state after mounting draft modal."""
-        db_service = getattr(self.app, "db", None)  # type: ignore[attr-defined]
-        if db_service is None:
+        repository = getattr(self.app, "repository", None)  # type: ignore[attr-defined]
+        if repository is None:
             self.action_close()
             return
 
-        self._draft_service = MessageDraftService(db_service)
+        self._draft_service = MessageDraftService(repository)
         if self.seed.draft_id:
             existing = self._draft_service.get_draft(self.seed.draft_id)
             if existing is not None:
                 self._draft = existing
 
         if self._draft is None:
+            self._created_draft_on_open = True
             self._draft = self._draft_service.resolve_or_create_draft(
                 mode=self.seed.mode,
                 to_addresses=self.seed.to,
@@ -155,7 +264,11 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
                 source_message_id=self.seed.source_message_id,
                 source_thread_id=self.seed.source_thread_id,
             )
+        self._opened_draft_snapshot = self._draft.model_copy(deep=True)
+        self._persisted_draft_snapshot = self._draft.model_copy(deep=True)
         self._hydrate_fields_from_draft(self._draft)
+        self._draft_dirty = False
+        self._dirty_since_open = False
 
         try:
             compose_tabs = self.query_one("#message-draft-body-tabs", TabbedContent)
@@ -177,6 +290,8 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
         """Keep preview tab synchronized with editor body text."""
         preview = self.query_one("#message-draft-preview", Markdown)
         preview.update(to_rendered_markdown_preview(event.text_area.text))
+        if self._suspend_change_tracking:
+            return
         self._schedule_autosave()
 
     @on(Input.Changed, "#draft-to")
@@ -185,6 +300,8 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
     @on(Input.Changed, "#draft-subject")
     def on_header_field_changed(self, _event: Input.Changed) -> None:
         """Mark draft state dirty when any header field changes."""
+        if self._suspend_change_tracking:
+            return
         self._schedule_autosave()
 
     @on(TabbedContent.TabActivated, "#message-draft-body-tabs")
@@ -195,14 +312,10 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
             return
         self.query_one("#message-draft-preview", Markdown).focus()
 
-    def action_next_body_tab(self) -> None:
-        """Switch to next compose body tab (Edit/Preview)."""
+    def action_toggle_body_tab(self) -> None:
+        """Toggle between compose edit and preview tabs."""
         tabs = self.query_one("#message-draft-body-tabs", TabbedContent)
         tabs.active = "draft-preview" if tabs.active == "draft-edit" else "draft-edit"
-
-    def action_prev_body_tab(self) -> None:
-        """Switch to previous compose body tab (Edit/Preview)."""
-        self.action_next_body_tab()
 
     def action_save_draft(self) -> None:
         """Persist draft immediately and confirm save state to the user."""
@@ -211,6 +324,8 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
     def on_unmount(self) -> None:
         """Flush pending autosave and stop timers when screen unmounts."""
         self._stop_autosave_timer()
+        if self._discard_requested:
+            return
         self._persist_now(notify_user=False)
 
     def _schedule_autosave(self) -> None:
@@ -237,16 +352,20 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
 
     def _hydrate_fields_from_draft(self, draft: MessageDraft) -> None:
         """Populate compose widgets from persisted draft payload."""
-        self.query_one("#draft-to", Input).value = draft.to_addresses
-        self.query_one("#draft-cc", Input).value = draft.cc_addresses
-        self.query_one("#draft-bcc", Input).value = draft.bcc_addresses
-        self.query_one("#draft-subject", Input).value = draft.subject
+        self._suspend_change_tracking = True
+        try:
+            self.query_one("#draft-to", Input).value = draft.to_addresses
+            self.query_one("#draft-cc", Input).value = draft.cc_addresses
+            self.query_one("#draft-bcc", Input).value = draft.bcc_addresses
+            self.query_one("#draft-subject", Input).value = draft.subject
 
-        editor = self.query_one("#message-draft-editor", TextArea)
-        editor.load_text(draft.body)
-        self.query_one("#message-draft-preview", Markdown).update(
-            to_rendered_markdown_preview(draft.body)
-        )
+            editor = self.query_one("#message-draft-editor", TextArea)
+            editor.load_text(draft.body)
+            self.query_one("#message-draft-preview", Markdown).update(
+                to_rendered_markdown_preview(draft.body)
+            )
+        finally:
+            self._suspend_change_tracking = False
 
     def _collect_draft_payload(self) -> MessageDraft | None:
         """Build updated draft model from current widget field state."""
@@ -275,6 +394,7 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
         if not self._draft_dirty and not notify_user:
             return
         self._draft = self._draft_service.save_draft(payload)
+        self._persisted_draft_snapshot = self._draft.model_copy(deep=True)
         self._draft_dirty = False
         notify = getattr(self.app, "notify", None)
         if notify_user and callable(notify):
@@ -282,26 +402,134 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
 
     def _build_close_update(self) -> MessageDraftCloseUpdate:
         """Build close payload for caller-scoped draft refresh decisions."""
+        draft_for_update = self._draft or self._opened_draft_snapshot
         return MessageDraftCloseUpdate(
-            did_change=self._dirty_since_open,
-            draft_id=self._draft.id if self._draft is not None else None,
+            did_change=self._has_session_changes(),
+            draft_id=draft_for_update.id if draft_for_update is not None else None,
             source_thread_id=(
-                self._draft.source_thread_id if self._draft is not None else None
+                draft_for_update.source_thread_id
+                if draft_for_update is not None
+                else None
             ),
         )
 
-    def action_close(self) -> None:
-        """Dismiss draft modal."""
+    def _close_without_confirmation(self) -> None:
+        """Persist current draft state and dismiss compose modal."""
         self._stop_autosave_timer()
         self._persist_now(notify_user=False)
         self.dismiss(self._build_close_update())
+
+    def _discard_draft_changes(self) -> None:
+        """Remove or revert local draft state for this compose session."""
+        if self._draft_service is None:
+            self._close_without_confirmation()
+            return
+
+        self._stop_autosave_timer()
+        self._discard_requested = True
+        snapshot = self._opened_draft_snapshot
+
+        if self._created_draft_on_open:
+            draft_id = self._draft.id if self._draft is not None else None
+            if draft_id:
+                self._draft_service.delete_draft(draft_id)
+            self._draft = None
+        elif snapshot is not None:
+            self._draft = self._draft_service.save_draft(snapshot)
+
+        notify = getattr(self.app, "notify", None)
+        if callable(notify):
+            notify("Draft changes discarded.", severity="information")
+
+        self.dismiss(self._build_close_update())
+
+    def _delete_draft(self) -> None:
+        """Delete the current persisted draft and dismiss compose."""
+        if self._draft_service is None:
+            self._close_without_confirmation()
+            return
+
+        self._stop_autosave_timer()
+        self._discard_requested = True
+        draft_for_update = self._draft or self._opened_draft_snapshot
+        draft_id = draft_for_update.id if draft_for_update is not None else None
+        if draft_id:
+            self._draft_service.delete_draft(draft_id)
+        self._draft = None
+
+        notify = getattr(self.app, "notify", None)
+        if callable(notify):
+            notify("Draft deleted.", severity="information")
+
+        self.dismiss(
+            MessageDraftCloseUpdate(
+                did_change=True,
+                draft_id=draft_id,
+                source_thread_id=(
+                    draft_for_update.source_thread_id
+                    if draft_for_update is not None
+                    else None
+                ),
+            )
+        )
+
+    def _should_confirm_discard(self) -> bool:
+        """Return True when close should confirm discarding session edits."""
+        return self._has_session_changes()
+
+    def _has_session_changes(self) -> bool:
+        """Return True when current compose fields differ from the open snapshot."""
+        snapshot = self._opened_draft_snapshot
+        payload = self._collect_draft_payload()
+        if snapshot is None or payload is None:
+            return False
+        return any(
+            [
+                payload.to_addresses != snapshot.to_addresses,
+                payload.cc_addresses != snapshot.cc_addresses,
+                payload.bcc_addresses != snapshot.bcc_addresses,
+                payload.subject != snapshot.subject,
+                payload.body != snapshot.body,
+            ]
+        )
+
+    def _on_discard_confirmation_closed(self, action: str | None) -> None:
+        """Handle discard confirmation result and restore editor focus as needed."""
+        if action == "save":
+            self._close_without_confirmation()
+            return
+        if action == "discard":
+            self._discard_draft_changes()
+            return
+        if action == "delete":
+            self._delete_draft()
+            return
+
+        try:
+            self.query_one("#message-draft-editor", TextArea).focus()
+        except NoMatches:
+            pass
+
+    def action_close(self) -> None:
+        """Dismiss draft modal."""
+        if self._should_confirm_discard():
+            self.app.push_screen(
+                MessageDraftDiscardConfirmScreen(can_delete=self._draft is not None),
+                self._on_discard_confirmation_closed,
+            )
+            return
+        self._close_without_confirmation()
 
     def get_shortcuts(self) -> list[tuple[str, str]]:
         """Return compose footer shortcut set for current draft workflow."""
         return [
             ("CTRL+S", "Save"),
-            ("CTRL+TAB", "Preview"),
-            ("S-CTRL+TAB", "Edit"),
-            ("TAB", "Next Field"),
-            ("Q/ESC", "Close"),
+            (
+                binding_choices_label(
+                    settings.keybindings.compose_preview_toggle, "F2"
+                ),
+                "Preview",
+            ),
+            ("TAB", "Next"),
+            (binding_choices_label(settings.keybindings.close, "Q/ESC"), "Close"),
         ]

@@ -1,4 +1,3 @@
-from datetime import datetime
 from typing import TYPE_CHECKING, cast
 
 from textual.binding import Binding
@@ -7,6 +6,8 @@ from textual.message import Message
 from textual.widgets import ListItem, ListView, Static
 
 from shmail.config import settings
+from shmail.services.time import format_compact_datetime
+from shmail.widgets.shortcuts import binding_choices_label, movement_pair_label
 
 if TYPE_CHECKING:
     from shmail.app import ShmailApp
@@ -18,18 +19,24 @@ class ThreadList(ListView):
     BINDINGS = [
         Binding(settings.keybindings.up, "cursor_up", "Previous", show=False),
         Binding(settings.keybindings.down, "cursor_down", "Next", show=False),
-        Binding("g", "first_thread", "First Thread", show=False),
-        Binding("G", "last_thread", "Last Thread", show=False),
+        Binding(settings.keybindings.first, "first_thread", "First Thread", show=False),
+        Binding(settings.keybindings.last, "last_thread", "Last Thread", show=False),
     ]
 
     def get_shortcuts(self) -> list[tuple[str, str]]:
-        """Returns the active shortcuts for the ThreadList."""
+        """Return the active shortcuts for the thread list."""
         return [
-            ("ENTER", "Read"),
-            ("C", "Compose"),
-            ("J/K", "Move"),
-            ("G/g", "Top/End"),
-            ("TAB", "Labels"),
+            (binding_choices_label(settings.keybindings.select, "ENTER"), "Open"),
+            (binding_choices_label(settings.keybindings.compose, "C"), "New"),
+            (
+                movement_pair_label(settings.keybindings.up, settings.keybindings.down),
+                "Move",
+            ),
+            (
+                f"{binding_choices_label(settings.keybindings.first, 'G')}/{binding_choices_label(settings.keybindings.last, 'SHIFT+G')}",
+                "Home/End",
+            ),
+            (binding_choices_label(settings.keybindings.pane_prev, "TAB"), "Labels"),
         ]
 
     @property
@@ -47,16 +54,6 @@ class ThreadList(ListView):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.current_label_id = None
-
-    def on_mount(self) -> None:
-        """Watch draft revision updates for live thread indicator refreshes."""
-        if hasattr(type(self.shmail_app), "drafts_revision"):
-            self.watch(self.shmail_app, "drafts_revision", self._on_drafts_revision)
-
-    def _on_drafts_revision(self, _revision: int) -> None:
-        """Reload current thread rows when draft state changes."""
-        if self.current_label_id:
-            self.load_threads(self.current_label_id)
 
     def update_thread_draft_marker(self, thread_id: str, draft_count: int) -> None:
         """Update one visible thread row draft marker without reloading list."""
@@ -78,7 +75,7 @@ class ThreadList(ListView):
 
     def _load_threads_worker(self, label_id: str) -> None:
         """Loads thread rows in a worker and applies them on UI thread."""
-        threads = self.shmail_app.db.get_threads(label_id=label_id)
+        threads = self.shmail_app.thread_query.list_threads(label_id=label_id)
         self.app.call_from_thread(self._populate_threads, label_id, threads)
 
     def _populate_threads(self, label_id: str, threads: list[dict]) -> None:
@@ -174,22 +171,19 @@ class ThreadRow(ListItem):
                 yield Static(snippet, classes="thread-snippet", markup=False)
 
     def _format_date(self) -> str:
-        """Converts database timestamps into user-friendly display strings."""
-        raw = self.thread_data.get("timestamp", "")
-        if not raw:
-            return ""
-
-        try:
-            clean_raw = str(raw).replace("Z", "+00:00").replace(" ", "T")
-            dt = datetime.fromisoformat(clean_raw)
-            return dt.strftime("%b %d, %H:%M")
-        except Exception:
-            return str(raw)[:16].replace("T", ", ").replace(" ", ", ")
+        """Format the thread timestamp for compact list display."""
+        return format_compact_datetime(self.thread_data.get("timestamp", ""))
 
     def set_draft_count(self, draft_count: int) -> None:
         """Update draft indicator state for this row in-place."""
+        current_count = int(self.thread_data.get("draft_count") or 0)
+        current_has_draft = bool(self.thread_data.get("has_draft"))
+        next_has_draft = draft_count > 0
+        if current_count == draft_count and current_has_draft == next_has_draft:
+            return
+
         self.thread_data["draft_count"] = draft_count
-        self.thread_data["has_draft"] = int(draft_count > 0)
+        self.thread_data["has_draft"] = int(next_has_draft)
         try:
             indicator = self.query_one(".draft-indicator", Static)
         except Exception:

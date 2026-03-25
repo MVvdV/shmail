@@ -7,6 +7,7 @@ from textual.widgets import Select, Static
 
 from shmail.config import settings
 from shmail.services.auth import AuthService
+from shmail.widgets.shortcuts import primary_binding_label
 
 if TYPE_CHECKING:
     from shmail.app import ShmailApp
@@ -33,9 +34,9 @@ class AppHeader(Horizontal):
     def compose(self):
         """Yields the logo and account controls."""
         yield Static("SHMAIL", id="app-logo")
-        key = settings.keybindings.account.split(",", 1)[0].strip() or "a"
+        key = primary_binding_label(settings.keybindings.account, "A")
         with Horizontal(id="app-account-hint"):
-            yield Static(key.upper(), classes="shortcut-key", markup=False)
+            yield Static(key, classes="shortcut-key", markup=False)
             yield Static("Account", classes="shortcut-label", markup=False)
         yield Select[str](
             self._build_account_options(getattr(self.shmail_app, "email", "") or ""),

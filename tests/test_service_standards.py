@@ -2,16 +2,16 @@ import logging
 import pytest
 from unittest.mock import MagicMock, patch
 from shmail.services.auth import AuthService
-from shmail.services.db import DatabaseService
+from shmail.services.db import DatabaseRepository
 
 
 @pytest.fixture
 def test_db(tmp_path):
     """Provides a fresh, isolated database for each test."""
     db_path = tmp_path / "test_standards.db"
-    db_service = DatabaseService(db_path=db_path)
-    db_service.initialize()
-    return db_service
+    repository = DatabaseRepository(db_path=db_path)
+    repository.initialize()
+    return repository
 
 
 def test_auth_service_logging_on_failure(caplog):
@@ -29,8 +29,8 @@ def test_auth_service_logging_on_failure(caplog):
         assert "OAuth Crash" in caplog.text
 
 
-def test_db_service_transaction_logging(test_db, caplog):
-    """Verify that DatabaseService logs failures during transactions."""
+def test_repository_transaction_logging(test_db, caplog):
+    """Verify that DatabaseRepository logs failures during transactions."""
     with caplog.at_level(logging.ERROR):
         with pytest.raises(RuntimeError):
             with test_db.transaction():

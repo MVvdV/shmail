@@ -1,6 +1,5 @@
 """Thread viewer message card and shortcut footer widgets."""
 
-from datetime import datetime
 import json
 import webbrowser
 from typing import TYPE_CHECKING, cast
@@ -8,7 +7,7 @@ from typing import TYPE_CHECKING, cast
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.css.query import NoMatches
 from textual.events import Click
 from textual.message import Message
@@ -20,6 +19,13 @@ from shmail.config import settings
 from shmail.services.draft_preview import to_rendered_markdown_preview
 from shmail.services.link_policy import is_executable_href
 from shmail.services.parser import MessageParser
+from shmail.services.time import format_compact_datetime
+from shmail.widgets.shortcuts import (
+    ShortcutFooter,
+    binding_choices_label,
+    primary_binding_label,
+    movement_pair_label,
+)
 
 if TYPE_CHECKING:
     from shmail.app import ShmailApp
@@ -93,16 +99,8 @@ class MessageItem(Vertical):
         )
 
     def _format_date(self) -> str:
-        """Converts database timestamps into user-friendly display strings."""
-        raw = self.message_data.get("timestamp", "")
-        if not raw:
-            return ""
-        try:
-            clean_raw = str(raw).replace("Z", "+00:00").replace(" ", "T")
-            dt = datetime.fromisoformat(clean_raw)
-            return dt.strftime("%b %d, %H:%M")
-        except Exception:
-            return str(raw)[:16].replace("T", ", ").replace(" ", ", ")
+        """Format the message timestamp for compact card display."""
+        return format_compact_datetime(self.message_data.get("timestamp", ""))
 
     def watch_expanded(self, expanded: bool) -> None:
         """Toggles the visibility of the message body."""
@@ -134,7 +132,7 @@ class MessageItem(Vertical):
     def action_toggle_expand(self) -> None:
         """Toggles expansion on keyboard activation."""
         if bool(self.message_data.get("is_draft")):
-            action = getattr(self.screen, "action_compose_message", None)
+            action = getattr(self.screen, "open_focused_draft", None)
             if callable(action):
                 action()
                 return
@@ -330,15 +328,27 @@ class MessageItem(Vertical):
         return []
 
     def get_shortcuts(self) -> list[tuple[str, str]]:
-        """Returns the active shortcuts for the message card."""
+        """Return the active shortcuts for the message card."""
+        select_key = binding_choices_label(settings.keybindings.select, "ENTER")
+        reply_key = binding_choices_label(settings.keybindings.reply, "R")
+        reply_all_key = binding_choices_label(settings.keybindings.reply_all, "A")
+        forward_key = binding_choices_label(settings.keybindings.forward, "F")
+        delete_key = binding_choices_label(settings.keybindings.delete_draft, "X")
+        move_key = movement_pair_label(
+            settings.keybindings.up, settings.keybindings.down
+        )
+        close_key = binding_choices_label(settings.keybindings.close, "Q/ESC")
+        cycle_key = (
+            f"{primary_binding_label(settings.keybindings.thread_cycle_forward, 'TAB')}/"
+            f"{primary_binding_label(settings.keybindings.thread_cycle_backward, 'S+TAB')}"
+        )
         if bool(self.message_data.get("is_draft")):
             return [
-                ("ENTER", "Resume Draft"),
-                ("C", "Compose"),
-                ("J/K", "Move"),
-                ("TAB/F", "Next"),
-                ("S-TAB/F", "Prev"),
-                ("Q/ESC", "Close"),
+                (select_key, "Resume"),
+                (delete_key, "Delete"),
+                (move_key, "Move"),
+                (cycle_key, "Cycle"),
+                (close_key, "Close"),
             ]
 
         enter_label = (
@@ -348,42 +358,28 @@ class MessageItem(Vertical):
         )
         if self.expanded:
             return [
-                ("ENTER", enter_label),
-                ("C", "Compose"),
-                ("J/K", "Move"),
-                ("TAB/F", "Next Link/Card"),
-                ("S-TAB/F", "Prev Link/Card"),
-                ("Q/ESC", "Close"),
+                (select_key, "Open" if enter_label == "Open Link" else enter_label),
+                (reply_key, "Reply"),
+                (reply_all_key, "All"),
+                (forward_key, "Fwd"),
+                (move_key, "Move"),
+                (cycle_key, "Cycle"),
+                (close_key, "Close"),
             ]
         return [
-            ("ENTER", enter_label),
-            ("C", "Compose"),
-            ("J/K", "Move"),
-            ("TAB/F", "Next"),
-            ("S-TAB/F", "Prev"),
-            ("Q/ESC", "Close"),
+            (select_key, enter_label),
+            (reply_key, "Reply"),
+            (reply_all_key, "All"),
+            (forward_key, "Fwd"),
+            (move_key, "Move"),
+            (cycle_key, "Cycle"),
+            (close_key, "Close"),
         ]
 
 
-class ThreadFooter(Horizontal):
+class ThreadFooter(ShortcutFooter):
     """A custom footer for the thread viewer modal displaying shortcuts."""
 
-    def compose(self) -> ComposeResult:
-        """Yields shortcut information."""
-        yield Static("v0.1.0", id="thread-version")
-        yield Horizontal(id="thread-shortcuts")
-
-    def update_shortcuts(self, shortcuts: list[tuple[str, str]]) -> None:
-        """Updates the displayed shortcuts in the footer."""
-        container = self.query_one("#thread-shortcuts", Horizontal)
-        container.remove_children()
-
-        new_widgets = []
-        for i, (key, label) in enumerate(shortcuts):
-            if i > 0:
-                new_widgets.append(Static("•", classes="shortcut-separator"))
-            new_widgets.append(Static(key, classes="shortcut-key", markup=False))
-            new_widgets.append(Static(label, classes="shortcut-label", markup=False))
-
-        if new_widgets:
-            container.mount(*new_widgets)
+    version_id = "thread-version"
+    shortcuts_id = "thread-shortcuts"
+    show_version = False

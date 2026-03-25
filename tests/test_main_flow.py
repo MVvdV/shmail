@@ -4,35 +4,53 @@ from unittest.mock import patch
 
 import pytest
 from textual.app import App
-from textual.reactive import reactive
 from textual.widgets import Input, Select, Static, TabbedContent, TextArea
 
 from shmail.services.auth import AuthService
+from shmail.config import settings
+from shmail.services.label_query import LabelQueryService
+from shmail.services.label_state import LabelStateService
 from shmail.services.draft_preview import to_rendered_markdown_preview
-from shmail.screens.message_draft import MessageDraftScreen
+from shmail.screens.message_draft import (
+    MessageDraftCloseUpdate,
+    MessageDraftDiscardConfirmScreen,
+    MessageDraftScreen,
+    MessageDraftSeed,
+)
 from shmail.screens import MainScreen
-from shmail.widgets import AppHeader, LabelsSidebar, ThreadList, ThreadRow, LabelItem
-from shmail.services.db import DatabaseService
+from shmail.widgets import (
+    AppHeader,
+    LabelsSidebar,
+    ThreadList,
+    ThreadRow,
+    LabelItem,
+    MessageItem,
+)
+from shmail.services.db import DatabaseRepository
 from shmail.models import Label, Message, MessageDraft
+from shmail.services.thread_query import ThreadQueryService
+from shmail.services.thread_viewer import ThreadViewerService
 
 
 @pytest.fixture
 def test_db(tmp_path):
     """Provides a fresh, isolated database for each test."""
     db_path = tmp_path / "test.db"
-    db_service = DatabaseService(db_path=db_path)
-    db_service.initialize()
-    return db_service
+    repository = DatabaseRepository(db_path=db_path)
+    repository.initialize()
+    return repository
 
 
 class MockApp(App):
     """A mock app to host the MainScreen for testing."""
 
-    drafts_revision = reactive(0)
-
-    def __init__(self, db_service):
+    def __init__(self, repository):
         super().__init__()
-        self.db = db_service
+        self.repository = repository
+        self.label_query = LabelQueryService(repository)
+        self.label_state = LabelStateService(self.label_query)
+        self.thread_query = ThreadQueryService(repository)
+        self.thread_viewer = ThreadViewerService(repository)
         self.email = "tester@example.com"
         self.notifications = []
         self.sign_out_calls = 0
@@ -50,9 +68,30 @@ class MockApp(App):
         """Track add-account requests for account selector tests."""
         self.sign_in_calls += 1
 
-    def bump_drafts_revision(self) -> None:
-        """Mirror app draft-revision signal for widget watcher tests."""
-        self.drafts_revision += 1
+    def apply_message_draft_update(self, update) -> None:
+        """Mirror targeted draft refresh handling used by the real app."""
+        if update is None or not update.did_change:
+            return
+
+        source_thread_id = (update.source_thread_id or "").strip()
+        main_screen = self.screen
+        labels_sidebar = main_screen.query_one("#labels-sidebar", LabelsSidebar)
+        total_drafts = self.repository.get_total_local_draft_count()
+        patch = self.label_state.patch_label("DRAFT", unread_count=total_drafts)
+        if patch is not None:
+            labels_sidebar.apply_label_patch(patch)
+        else:
+            labels_sidebar.refresh_labels()
+
+        thread_list = main_screen.query_one("#threads-list", ThreadList)
+        current_label = str(getattr(thread_list, "current_label_id", "") or "")
+        if current_label.upper() == "DRAFT":
+            thread_list.load_threads("DRAFT")
+            return
+
+        if source_thread_id:
+            draft_count = self.repository.get_thread_draft_count(source_thread_id)
+            thread_list.update_thread_draft_marker(source_thread_id, draft_count)
 
     def on_mount(self) -> None:
         self.push_screen(MainScreen())
@@ -95,6 +134,30 @@ def test_sidebar_labels_load(test_db):
             assert sent_item is not None
             assert "Inbox" in inbox_item.display_name
             assert "Sent" in sent_item.display_name
+
+    asyncio.run(run_test())
+
+
+def test_sidebar_applies_label_state_patch_without_full_reload(test_db):
+    """Verify sidebar can apply one targeted label-state patch in place."""
+    with test_db.transaction() as conn:
+        test_db.upsert_label(conn, "DRAFT", "Draft", "system")
+
+    async def run_test():
+        app = MockApp(test_db)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            labels_sidebar = app.screen.query_one("#labels-sidebar", LabelsSidebar)
+            draft_item = find_node_by_data(labels_sidebar, "DRAFT")
+            assert draft_item is not None
+            assert draft_item.count == 0
+
+            patch = app.label_state.patch_label("DRAFT", unread_count=3, name="Draft")
+            assert patch is not None
+            labels_sidebar.apply_label_patch(patch)
+
+            assert draft_item.count == 3
 
     asyncio.run(run_test())
 
@@ -356,6 +419,54 @@ def test_compose_binding_from_main_opens_message_draft_modal(test_db):
     asyncio.run(run_test())
 
 
+def test_sidebar_focus_restores_cursor_to_active_label(test_db):
+    """Verify sidebar focus snaps back to the active label without stale selection drift."""
+    with test_db.transaction() as conn:
+        test_db.upsert_label(conn, "INBOX", "Inbox", "system")
+        test_db.upsert_label(conn, "SENT", "Sent", "system")
+
+    async def run_test():
+        app = MockApp(test_db)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            labels_sidebar = app.screen.query_one("#labels-sidebar", LabelsSidebar)
+            labels_list = app.screen.query_one("#labels-sidebar-list")
+            thread_list = app.screen.query_one("#threads-list", ThreadList)
+
+            labels_list.focus()
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            selected_items = [
+                item
+                for item in labels_sidebar.label_list.query(LabelItem)
+                if item.has_class("selected")
+            ]
+            assert len(selected_items) == 1
+            assert selected_items[0].label_id == "SENT"
+            assert _is_within(app.focused, thread_list)
+
+            labels_sidebar.label_list.index = 0
+            await pilot.press("tab")
+            await pilot.pause()
+
+            assert _is_within(app.focused, labels_list)
+            assert labels_sidebar.label_list.index == 1
+            selected_items = [
+                item
+                for item in labels_sidebar.label_list.query(LabelItem)
+                if item.has_class("selected")
+            ]
+            assert len(selected_items) == 1
+            assert selected_items[0].label_id == "SENT"
+
+    asyncio.run(run_test())
+
+
 def test_message_draft_screen_ctrl_s_persists_local_draft(test_db):
     """Verify explicit save in compose modal writes local message draft row."""
 
@@ -387,8 +498,306 @@ def test_message_draft_screen_ctrl_s_persists_local_draft(test_db):
     asyncio.run(run_test())
 
 
-def test_compose_tab_switch_binding_works_with_alt_fallback(test_db):
-    """Verify compose body tab switching works with reliable fallback bindings."""
+def test_message_draft_close_with_changes_opens_discard_confirmation(test_db):
+    """Verify closing a dirty draft prompts for discard confirmation."""
+
+    async def run_test():
+        app = MockApp(test_db)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            assert isinstance(app.screen, MessageDraftScreen)
+            draft_subject = app.screen.query_one("#draft-subject", Input)
+            draft_subject.value = "Unsaved Subject"
+            await pilot.pause()
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert isinstance(app.screen, MessageDraftDiscardConfirmScreen)
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert isinstance(app.screen, MessageDraftScreen)
+
+    asyncio.run(run_test())
+
+
+def test_message_draft_close_without_edits_does_not_prompt(test_db):
+    """Verify open-close without edits dismisses directly without confirmation."""
+
+    async def run_test():
+        app = MockApp(test_db)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            assert isinstance(app.screen, MessageDraftScreen)
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert isinstance(app.screen, MainScreen)
+
+    asyncio.run(run_test())
+
+
+def test_message_draft_close_after_autosave_still_opens_discard_confirmation(test_db):
+    """Verify close confirmation still appears after autosave clears dirty flag."""
+
+    async def run_test():
+        app = MockApp(test_db)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            assert isinstance(app.screen, MessageDraftScreen)
+            draft_subject = app.screen.query_one("#draft-subject", Input)
+            draft_subject.value = "Autosaved Subject"
+            await pilot.pause(1.0)
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert isinstance(app.screen, MessageDraftDiscardConfirmScreen)
+
+    asyncio.run(run_test())
+
+
+def test_message_draft_discard_removes_new_local_draft(test_db):
+    """Verify discarding a new dirty draft deletes its local persisted row."""
+
+    async def run_test():
+        app = MockApp(test_db)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            assert isinstance(app.screen, MessageDraftScreen)
+            draft_subject = app.screen.query_one("#draft-subject", Input)
+            draft_editor = app.screen.query_one("#message-draft-editor", TextArea)
+            draft_subject.value = "Disposable"
+            draft_editor.load_text("Delete me")
+            await pilot.pause()
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert isinstance(app.screen, MessageDraftDiscardConfirmScreen)
+
+            await pilot.press("d")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert isinstance(app.screen, MainScreen)
+            assert test_db.list_message_drafts() == []
+            assert app.notifications[-1] == ("Draft changes discarded.", "information")
+
+    asyncio.run(run_test())
+
+
+def test_message_draft_delete_option_removes_existing_draft(test_db):
+    """Verify delete action removes an existing persisted draft entirely."""
+    now = datetime.now()
+    with test_db.transaction() as conn:
+        test_db.upsert_message_draft(
+            conn,
+            MessageDraft(
+                id="draft_delete_existing",
+                mode="reply",
+                to_addresses="alice@example.com",
+                cc_addresses="",
+                bcc_addresses="",
+                subject="Re: Delete Me",
+                body="Delete body",
+                source_message_id="message_1",
+                source_thread_id="thread_1",
+                created_at=now,
+                updated_at=now,
+            ),
+        )
+
+    async def run_test():
+        app = MockApp(test_db)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.push_screen(
+                MessageDraftScreen(
+                    seed=MessageDraftSeed(
+                        mode="draft", draft_id="draft_delete_existing"
+                    )
+                )
+            )
+            await pilot.pause()
+
+            assert isinstance(app.screen, MessageDraftScreen)
+            draft_subject = app.screen.query_one("#draft-subject", Input)
+            draft_subject.value = "Re: Delete Me Updated"
+            await pilot.pause()
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert isinstance(app.screen, MessageDraftDiscardConfirmScreen)
+
+            await pilot.press("x")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert isinstance(app.screen, MainScreen)
+            assert test_db.get_message_draft("draft_delete_existing") is None
+            assert app.notifications[-1] == ("Draft deleted.", "information")
+
+    asyncio.run(run_test())
+
+
+def test_message_draft_discard_removes_new_autosaved_local_draft(test_db):
+    """Verify discarding a new autosaved draft deletes the draft row."""
+
+    async def run_test():
+        app = MockApp(test_db)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            assert isinstance(app.screen, MessageDraftScreen)
+            draft_subject = app.screen.query_one("#draft-subject", Input)
+            draft_editor = app.screen.query_one("#message-draft-editor", TextArea)
+            draft_subject.value = "Disposable Autosaved"
+            draft_editor.load_text("Delete me after autosave")
+            await pilot.pause(1.0)
+
+            assert test_db.list_message_drafts()
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert isinstance(app.screen, MessageDraftDiscardConfirmScreen)
+
+            await pilot.press("d")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert isinstance(app.screen, MainScreen)
+            assert test_db.list_message_drafts() == []
+
+    asyncio.run(run_test())
+
+
+def test_message_draft_discard_restores_existing_draft_snapshot(test_db):
+    """Verify discarding edits on a saved draft restores the original payload."""
+    now = datetime.now()
+    with test_db.transaction() as conn:
+        test_db.upsert_message_draft(
+            conn,
+            MessageDraft(
+                id="draft_existing",
+                mode="reply",
+                to_addresses="alice@example.com",
+                cc_addresses="bob@example.com",
+                bcc_addresses="",
+                subject="Re: Original",
+                body="Original body",
+                source_message_id="message_1",
+                source_thread_id="thread_1",
+                created_at=now,
+                updated_at=now,
+            ),
+        )
+
+    async def run_test():
+        app = MockApp(test_db)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.push_screen(
+                MessageDraftScreen(
+                    seed=MessageDraftSeed(mode="draft", draft_id="draft_existing")
+                )
+            )
+            await pilot.pause()
+
+            assert isinstance(app.screen, MessageDraftScreen)
+            draft_subject = app.screen.query_one("#draft-subject", Input)
+            draft_editor = app.screen.query_one("#message-draft-editor", TextArea)
+            draft_subject.value = "Re: Changed"
+            draft_editor.load_text("Changed body")
+            await pilot.pause()
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert isinstance(app.screen, MessageDraftDiscardConfirmScreen)
+
+            await pilot.press("d")
+            await pilot.pause()
+            await pilot.pause()
+
+            restored = test_db.get_message_draft("draft_existing")
+            assert restored is not None
+            assert restored["subject"] == "Re: Original"
+            assert restored["body"] == "Original body"
+
+    asyncio.run(run_test())
+
+
+def test_message_draft_discard_restores_existing_snapshot_after_autosave(test_db):
+    """Verify autosaved edits still discard back to the draft-open snapshot."""
+    now = datetime.now()
+    with test_db.transaction() as conn:
+        test_db.upsert_message_draft(
+            conn,
+            MessageDraft(
+                id="draft_existing_autosave",
+                mode="reply",
+                to_addresses="alice@example.com",
+                cc_addresses="",
+                bcc_addresses="",
+                subject="Re: Baseline",
+                body="Baseline body",
+                source_message_id="message_1",
+                source_thread_id="thread_1",
+                created_at=now,
+                updated_at=now,
+            ),
+        )
+
+    async def run_test():
+        app = MockApp(test_db)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.push_screen(
+                MessageDraftScreen(
+                    seed=MessageDraftSeed(
+                        mode="draft", draft_id="draft_existing_autosave"
+                    )
+                )
+            )
+            await pilot.pause()
+
+            assert isinstance(app.screen, MessageDraftScreen)
+            draft_subject = app.screen.query_one("#draft-subject", Input)
+            draft_editor = app.screen.query_one("#message-draft-editor", TextArea)
+            draft_subject.value = "Re: Autosaved Change"
+            draft_editor.load_text("Autosaved change")
+            await pilot.pause(1.0)
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert isinstance(app.screen, MessageDraftDiscardConfirmScreen)
+
+            await pilot.press("d")
+            await pilot.pause()
+            await pilot.pause()
+
+            restored = test_db.get_message_draft("draft_existing_autosave")
+            assert restored is not None
+            assert restored["subject"] == "Re: Baseline"
+            assert restored["body"] == "Baseline body"
+
+    asyncio.run(run_test())
+
+
+def test_compose_preview_toggle_binding_switches_between_tabs(test_db):
+    """Verify compose preview toggle binding switches edit and preview tabs."""
 
     async def run_test():
         app = MockApp(test_db)
@@ -401,13 +810,17 @@ def test_compose_tab_switch_binding_works_with_alt_fallback(test_db):
             tabs = app.screen.query_one("#message-draft-body-tabs", TabbedContent)
             assert tabs.active == "draft-edit"
 
-            await pilot.press("alt+right")
+            await pilot.press("f2")
             await pilot.pause()
             assert tabs.active == "draft-preview"
 
-            await pilot.press("alt+left")
+            await pilot.press("f2")
             await pilot.pause()
             assert tabs.active == "draft-edit"
+
+            await pilot.press("f2")
+            await pilot.pause()
+            assert tabs.active == "draft-preview"
 
     asyncio.run(run_test())
 
@@ -501,7 +914,13 @@ def test_thread_row_draft_indicator_updates_without_label_switch(test_db):
                     ),
                 )
 
-            app.bump_drafts_revision()
+            app.apply_message_draft_update(
+                MessageDraftCloseUpdate(
+                    did_change=True,
+                    draft_id="draft_refresh",
+                    source_thread_id="t_draft_refresh",
+                )
+            )
             await pilot.pause()
             await pilot.pause()
 
@@ -519,3 +938,37 @@ def test_compose_preview_normalization_preserves_single_newlines_outside_code():
     assert "alpha  \nbeta" in preview
     assert "> one  \n> two" in preview
     assert "```\nline1\nline2\n```" in preview
+
+
+def test_shortcut_labels_follow_configured_bindings(monkeypatch):
+    """Ensure user-facing shortcut labels reflect configured bindings."""
+    original_first = settings.keybindings.first
+    original_last = settings.keybindings.last
+    original_pane_next = settings.keybindings.pane_next
+    original_cycle_forward = settings.keybindings.thread_cycle_forward
+    try:
+        settings.keybindings.first = "home"
+        settings.keybindings.last = "end"
+        settings.keybindings.pane_next = "ctrl+l"
+        settings.keybindings.thread_cycle_forward = "n"
+
+        labels_shortcuts = LabelsSidebar().get_shortcuts()
+        thread_shortcuts = ThreadList().get_shortcuts()
+        message_shortcuts = MessageItem(
+            {
+                "subject": "Test",
+                "sender": "A",
+                "recipient_to": "B",
+                "timestamp": "2026-03-25T10:00:00+00:00",
+            }
+        ).get_shortcuts()
+
+        assert ("HOME/END", "Home/End") in labels_shortcuts
+        assert ("CTRL+L", "Threads") in labels_shortcuts
+        assert ("HOME/END", "Home/End") in thread_shortcuts
+        assert any(shortcut[0].startswith("N/") for shortcut in message_shortcuts)
+    finally:
+        settings.keybindings.first = original_first
+        settings.keybindings.last = original_last
+        settings.keybindings.pane_next = original_pane_next
+        settings.keybindings.thread_cycle_forward = original_cycle_forward

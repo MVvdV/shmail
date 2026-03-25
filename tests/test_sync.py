@@ -1,26 +1,26 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 from googleapiclient.errors import HttpError
 
 from shmail.models import Message, Label
-from shmail.services.db import DatabaseService
+from shmail.services.db import DatabaseRepository
 from shmail.services.sync import SyncService, SyncResult
 
 
 @pytest.fixture
 def test_db(tmp_path):
     db_file = tmp_path / "test_shmail.db"
-    db_service = DatabaseService(db_path=db_file)
-    db_service.initialize()
-    return db_service
+    repository = DatabaseRepository(db_path=db_file)
+    repository.initialize()
+    return repository
 
 
 @pytest.fixture
 def sync_service(test_db):
     with patch("shmail.services.sync.AuthService"):
-        service = SyncService("test@example.com", database=test_db)
+        service = SyncService("test@example.com", repository=test_db)
         with patch.object(
             SyncService, "gmail", new_callable=PropertyMock
         ) as mock_gmail:
@@ -100,7 +100,7 @@ def test_incremental_sync_deleted_messages(sync_service, test_db):
 
 
 def test_incremental_sync_expired_id(sync_service, test_db):
-    """Test fallback to initial_sync when historyId is expired (404/410)."""
+    """Test fallback to full reconciliation when historyId is expired."""
     with test_db.transaction() as conn:
         test_db.set_metadata(conn, "history_id", "expired_id")
 
@@ -108,12 +108,53 @@ def test_incremental_sync_expired_id(sync_service, test_db):
     resp.status = 404
     sync_service.gmail.list_history.side_effect = HttpError(resp=resp, content=b"")
 
-    sync_service.initial_sync = MagicMock()
+    sync_service.gmail.list_labels.return_value = [
+        {"id": "INBOX", "name": "Inbox", "type": "system"}
+    ]
+    sync_service.gmail.list_messages.return_value = []
+    sync_service.gmail.get_profile.return_value = {"historyId": "2000"}
 
     result = sync_service.incremental_sync()
 
-    assert sync_service.initial_sync.called
-    assert result.any_changes is True
+    assert sync_service.gmail.list_messages.called
+    assert test_db.get_metadata("history_id") == "2000"
+    assert result.any_changes is False
+
+
+def test_incremental_sync_expired_id_reconciles_stale_local_messages(
+    sync_service, test_db
+):
+    """Ensure expired-history fallback removes stale local cache rows."""
+    with test_db.transaction() as conn:
+        test_db.set_metadata(conn, "history_id", "expired_id")
+        test_db.upsert_label(conn, "INBOX", "Inbox", "system")
+        test_db.upsert_message(
+            conn,
+            Message(
+                id="stale_msg",
+                thread_id="thread_stale",
+                subject="Stale",
+                sender="stale@example.com",
+                snippet="stale",
+                timestamp=datetime.now(timezone.utc),
+                labels=[Label(id="INBOX", name="Inbox", type="system")],
+            ),
+        )
+
+    resp = MagicMock()
+    resp.status = 410
+    sync_service.gmail.list_history.side_effect = HttpError(resp=resp, content=b"")
+    sync_service.gmail.list_labels.return_value = [
+        {"id": "INBOX", "name": "Inbox", "type": "system"}
+    ]
+    sync_service.gmail.list_messages.return_value = []
+    sync_service.gmail.get_profile.return_value = {"historyId": "3000"}
+
+    result = sync_service.incremental_sync()
+
+    assert result.removed == 1
+    assert test_db.count_messages() == 0
+    assert test_db.get_metadata("history_id") == "3000"
 
 
 def test_incremental_sync_label_changes(sync_service, test_db):

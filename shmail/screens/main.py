@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING, cast
 
 from shmail.config import settings
 from .message_draft import MessageDraftCloseUpdate, MessageDraftScreen, MessageDraftSeed
+from shmail.widgets.shortcuts import resolve_shortcut_owner
 from shmail.widgets import AppFooter, AppHeader, LabelsSidebar, ThreadList
 from .thread_messages import ThreadMessagesScreen
 from textual.app import ComposeResult
@@ -19,8 +20,15 @@ class MainScreen(Screen):
 
     BINDINGS = [
         Binding(settings.keybindings.compose, "compose_message", "Compose", show=False),
-        Binding("tab", "focus_next_pane", "Next Pane", show=False),
-        Binding("shift+tab", "focus_prev_pane", "Previous Pane", show=False),
+        Binding(
+            settings.keybindings.pane_next, "focus_next_pane", "Next Pane", show=False
+        ),
+        Binding(
+            settings.keybindings.pane_prev,
+            "focus_prev_pane",
+            "Previous Pane",
+            show=False,
+        ),
     ]
 
     @property
@@ -53,15 +61,11 @@ class MainScreen(Screen):
     def watch_focused(self, focused) -> None:
         """Updates the footer shortcuts when the focused widget changes."""
         footer = self.query_one(AppFooter)
-        if hasattr(focused, "get_shortcuts"):
-            footer.update_shortcuts(focused.get_shortcuts())
-        elif focused is not None:
-            parent = focused.parent
-            while parent is not None:
-                if hasattr(parent, "get_shortcuts"):
-                    footer.update_shortcuts(parent.get_shortcuts())
-                    break
-                parent = parent.parent
+        owner = resolve_shortcut_owner(focused)
+        if owner is not None:
+            get_shortcuts = getattr(owner, "get_shortcuts", None)
+            if callable(get_shortcuts):
+                footer.update_shortcuts(cast(list[tuple[str, str]], get_shortcuts()))
 
     @staticmethod
     def _is_within(widget: Widget | None, ancestor: Widget) -> bool:
@@ -101,25 +105,7 @@ class MainScreen(Screen):
         )
 
     def _on_message_draft_closed(self, update: MessageDraftCloseUpdate | None) -> None:
-        """Apply targeted label/thread updates after compose modal closes."""
-        if update is None or not update.did_change:
-            return
-
-        labels_sidebar = self.query_one(LabelsSidebar)
-        total_drafts = self.shmail_app.db.get_total_local_draft_count()
-        labels_sidebar.update_draft_count(total_drafts)
-
-        thread_list = self.query_one(ThreadList)
-        current_label = (thread_list.current_label_id or "").upper()
-        if current_label == "DRAFT":
-            thread_list.load_threads("DRAFT")
-            return
-
-        if update.source_thread_id:
-            draft_count = self.shmail_app.db.get_thread_draft_count(
-                update.source_thread_id
-            )
-            thread_list.update_thread_draft_marker(
-                update.source_thread_id,
-                draft_count,
-            )
+        """Delegate draft-close refresh handling to the app authority."""
+        apply_update = getattr(self.shmail_app, "apply_message_draft_update", None)
+        if callable(apply_update):
+            apply_update(update)

@@ -1,1 +1,1 @@
-"""Service-layer modules for authentication, Gmail, sync, parsing, and storage."""
+"""Repository, service, and query-service modules for Shmail."""

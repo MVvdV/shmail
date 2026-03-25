@@ -3,16 +3,16 @@ from datetime import datetime
 import pytest
 
 from shmail.models import Message, MessageDraft
-from shmail.services.db import DatabaseService
+from shmail.services.db import DatabaseRepository
 
 
 @pytest.fixture
 def test_db(tmp_path):
     """Provides a temporary database for testing."""
     db_file = tmp_path / "test.db"
-    db_service = DatabaseService(db_path=db_file)
-    db_service.initialize()
-    return db_service
+    repository = DatabaseRepository(db_path=db_file)
+    repository.initialize()
+    return repository
 
 
 def test_upsert_label(test_db):
@@ -322,6 +322,70 @@ def test_get_thread_messages_sorts_mixed_timezone_timestamps_without_crash(test_
 
     rows = test_db.get_thread_messages("thread_tz")
     assert len(rows) == 2
+
+
+def test_get_thread_messages_places_drafts_above_their_source_messages(test_db):
+    """Ensure thread drafts render immediately above their seeded source message."""
+    newer = datetime.fromisoformat("2026-03-24T12:00:00+00:00")
+    older = datetime.fromisoformat("2026-03-24T11:00:00+00:00")
+
+    message_new = Message(
+        id="msg_new",
+        thread_id="thread_ordered",
+        subject="Newer",
+        sender="sender@example.com",
+        snippet="new",
+        timestamp=newer,
+    )
+    message_old = Message(
+        id="msg_old",
+        thread_id="thread_ordered",
+        subject="Older",
+        sender="sender@example.com",
+        snippet="old",
+        timestamp=older,
+    )
+    draft_new = MessageDraft(
+        id="draft_new",
+        mode="reply",
+        to_addresses="alice@example.com",
+        cc_addresses="",
+        bcc_addresses="",
+        subject="Re: Newer",
+        body="draft newer",
+        source_message_id="msg_new",
+        source_thread_id="thread_ordered",
+        created_at=newer,
+        updated_at=newer,
+    )
+    draft_old = MessageDraft(
+        id="draft_old",
+        mode="reply",
+        to_addresses="alice@example.com",
+        cc_addresses="",
+        bcc_addresses="",
+        subject="Re: Older",
+        body="draft older",
+        source_message_id="msg_old",
+        source_thread_id="thread_ordered",
+        created_at=older,
+        updated_at=older,
+    )
+
+    with test_db.transaction() as conn:
+        test_db.upsert_message(conn, message_new)
+        test_db.upsert_message(conn, message_old)
+        test_db.upsert_message_draft(conn, draft_new)
+        test_db.upsert_message_draft(conn, draft_old)
+
+    rows = test_db.get_thread_messages("thread_ordered")
+
+    assert [row["id"] for row in rows] == [
+        "draft:draft_new",
+        "msg_new",
+        "draft:draft_old",
+        "msg_old",
+    ]
 
 
 def test_get_labels_with_counts_uses_total_local_drafts_for_draft_label(test_db):

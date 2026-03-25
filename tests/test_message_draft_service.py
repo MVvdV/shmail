@@ -1,23 +1,24 @@
-from datetime import datetime
+from datetime import timezone
 
 import pytest
 
-from shmail.services.db import DatabaseService
+from shmail.services.db import DatabaseRepository
 from shmail.services.message_draft import MessageDraftService
+from shmail.services.time import now_utc
 
 
 @pytest.fixture
 def test_db(tmp_path):
     """Provides isolated DB for message-draft service tests."""
     db_file = tmp_path / "draft_service.db"
-    db_service = DatabaseService(db_path=db_file)
-    db_service.initialize()
-    return db_service
+    repository = DatabaseRepository(db_path=db_file)
+    repository.initialize()
+    return repository
 
 
 def test_resolve_or_create_draft_reuses_seeded_reply_draft(test_db):
     """Ensure seed-based draft lookup returns existing reply draft."""
-    service = MessageDraftService(database=test_db)
+    service = MessageDraftService(repository=test_db)
     first = service.resolve_or_create_draft(
         mode="reply",
         to_addresses="alice@example.com",
@@ -46,7 +47,7 @@ def test_resolve_or_create_draft_reuses_seeded_reply_draft(test_db):
 
 def test_save_draft_updates_timestamp_and_body(test_db):
     """Ensure save_draft updates content and refreshed updated_at."""
-    service = MessageDraftService(database=test_db)
+    service = MessageDraftService(repository=test_db)
     draft = service.resolve_or_create_draft(
         mode="new",
         to_addresses="",
@@ -58,10 +59,14 @@ def test_save_draft_updates_timestamp_and_body(test_db):
         source_thread_id=None,
     )
 
-    refreshed = draft.model_copy(update={"body": "beta", "updated_at": datetime.now()})
+    refreshed = draft.model_copy(update={"body": "beta", "updated_at": now_utc()})
     saved = service.save_draft(refreshed)
 
     assert saved.body == "beta"
+    assert saved.created_at.tzinfo == timezone.utc
+    assert saved.updated_at.tzinfo == timezone.utc
     loaded = service.get_draft(saved.id)
     assert loaded is not None
     assert loaded.body == "beta"
+    assert loaded.created_at.tzinfo == timezone.utc
+    assert loaded.updated_at.tzinfo == timezone.utc

@@ -3,7 +3,6 @@
 import contextlib
 import logging
 import sqlite3
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Generator, List, Optional
 
@@ -11,13 +10,14 @@ if TYPE_CHECKING:
     from shmail.models import Message, MessageDraft
 
 from shmail.config import CONFIG_DIR
+from shmail.services.time import to_timestamp
 
 DB_PATH = CONFIG_DIR / "shmail.db"
 
 logger = logging.getLogger(__name__)
 
 
-class DatabaseService:
+class DatabaseRepository:
     """Provide local SQLite persistence for messages, labels, and contacts."""
 
     def __init__(self, db_path: Path = DB_PATH):
@@ -274,6 +274,16 @@ class DatabaseService:
             )
             return [dict(row) for row in cursor.fetchall()]
 
+    def count_messages(self) -> int:
+        """Return the total number of persisted messages."""
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT COUNT(*) AS total FROM messages").fetchone()
+            return int(row["total"]) if row is not None else 0
+
+    def reset_message_cache(self, conn: sqlite3.Connection) -> None:
+        """Delete all cached provider messages while preserving local drafts."""
+        conn.execute("DELETE FROM messages")
+
     def _get_draft_threads(self, limit: int = 50, offset: int = 0) -> List[dict]:
         """Return thread rows derived from local message drafts."""
         with self.get_connection() as conn:
@@ -367,64 +377,74 @@ class DatabaseService:
                 (thread_id,),
             ).fetchall()
 
+            anchored_drafts: dict[str, list[dict]] = {}
+            unanchored_drafts: list[dict] = []
             for row in draft_rows:
                 draft = dict(row)
-                messages.append(
-                    {
-                        "id": f"draft:{draft['id']}",
-                        "thread_id": thread_id,
-                        "subject": draft.get("subject") or "(Draft)",
-                        "sender": "You (Draft)",
-                        "sender_name": "You",
-                        "sender_address": "",
-                        "recipient_to": draft.get("to_addresses") or "",
-                        "recipient_to_addresses": draft.get("to_addresses") or "",
-                        "recipient_cc": draft.get("cc_addresses") or "",
-                        "recipient_cc_addresses": draft.get("cc_addresses") or "",
-                        "recipient_bcc": draft.get("bcc_addresses") or "",
-                        "recipient_bcc_addresses": draft.get("bcc_addresses") or "",
-                        "snippet": (draft.get("body") or "").splitlines()[0]
-                        if draft.get("body")
-                        else "",
-                        "body": draft.get("body") or "",
-                        "body_links": "[]",
-                        "body_source": "draft",
-                        "body_content_type": "text/plain",
-                        "body_charset": "utf-8",
-                        "body_link_count": 0,
-                        "body_conversion_warnings": "[]",
-                        "timestamp": draft.get("updated_at"),
-                        "is_read": 1,
-                        "has_attachments": 0,
-                        "is_draft": 1,
-                        "draft_id": draft.get("id"),
-                    }
+                draft_message = {
+                    "id": f"draft:{draft['id']}",
+                    "thread_id": thread_id,
+                    "subject": draft.get("subject") or "(Draft)",
+                    "sender": "You (Draft)",
+                    "sender_name": "You",
+                    "sender_address": "",
+                    "recipient_to": draft.get("to_addresses") or "",
+                    "recipient_to_addresses": draft.get("to_addresses") or "",
+                    "recipient_cc": draft.get("cc_addresses") or "",
+                    "recipient_cc_addresses": draft.get("cc_addresses") or "",
+                    "recipient_bcc": draft.get("bcc_addresses") or "",
+                    "recipient_bcc_addresses": draft.get("bcc_addresses") or "",
+                    "snippet": (draft.get("body") or "").splitlines()[0]
+                    if draft.get("body")
+                    else "",
+                    "body": draft.get("body") or "",
+                    "body_links": "[]",
+                    "body_source": "draft",
+                    "body_content_type": "text/plain",
+                    "body_charset": "utf-8",
+                    "body_link_count": 0,
+                    "body_conversion_warnings": "[]",
+                    "timestamp": draft.get("updated_at"),
+                    "is_read": 1,
+                    "has_attachments": 0,
+                    "is_draft": 1,
+                    "draft_id": draft.get("id"),
+                    "source_message_id": draft.get("source_message_id"),
+                }
+                source_message_id = str(draft.get("source_message_id") or "").strip()
+                if source_message_id:
+                    anchored_drafts.setdefault(source_message_id, []).append(
+                        draft_message
+                    )
+                else:
+                    unanchored_drafts.append(draft_message)
+
+            for draft_list in anchored_drafts.values():
+                draft_list.sort(
+                    key=lambda item: self._parse_timestamp(item.get("timestamp")),
+                    reverse=True,
                 )
 
-            messages.sort(
+            unanchored_drafts.sort(
                 key=lambda item: self._parse_timestamp(item.get("timestamp")),
                 reverse=True,
             )
-            return messages
+
+            ordered_messages: list[dict] = [*unanchored_drafts]
+            for message in messages:
+                ordered_messages.extend(
+                    anchored_drafts.get(str(message.get("id") or ""), [])
+                )
+                ordered_messages.append(message)
+
+            return ordered_messages
 
     @staticmethod
     def _parse_timestamp(raw: object) -> float:
         """Parse message-like timestamp values for deterministic ordering."""
-        if raw is None:
+        if raw is None or not str(raw).strip():
             return 0.0
-        text = str(raw).strip()
-        if not text:
-            return 0.0
-        normalized = text.replace("Z", "+00:00")
-        if "T" not in normalized and " " in normalized:
-            normalized = normalized.replace(" ", "T", 1)
-        try:
-            parsed = datetime.fromisoformat(normalized)
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return parsed.timestamp()
-        except Exception:
-            return 0.0
+        return to_timestamp(raw)
 
     def get_labels(self) -> List[dict]:
         """Return all labels from local storage."""
@@ -637,4 +657,4 @@ class DatabaseService:
             conn.execute("DELETE FROM labels")
 
 
-db = DatabaseService()
+db = DatabaseRepository()

@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from uuid import uuid4
 
 from shmail.models import MessageDraft
-from shmail.services.db import db
+from shmail.services.db import DatabaseRepository, db
+from shmail.services.time import now_utc, parse_utc_datetime
 
 
 class MessageDraftService:
     """Manage local message draft creation, retrieval, and persistence."""
 
-    def __init__(self, database=None):
-        self.db = database or db
+    def __init__(self, repository: DatabaseRepository | None = None):
+        self.repository = repository or db
 
     def resolve_or_create_draft(
         self,
@@ -29,7 +29,7 @@ class MessageDraftService:
         """Load existing seed draft when present, else create and persist one."""
         existing = None
         if source_message_id or source_thread_id:
-            existing = self.db.get_message_draft_by_source(
+            existing = self.repository.get_message_draft_by_source(
                 mode=mode,
                 source_message_id=source_message_id,
                 source_thread_id=source_thread_id,
@@ -37,7 +37,7 @@ class MessageDraftService:
         if existing:
             return self._row_to_message_draft(existing)
 
-        now = datetime.now()
+        now = now_utc()
         draft = MessageDraft(
             id=str(uuid4()),
             mode=mode,
@@ -56,37 +56,31 @@ class MessageDraftService:
 
     def get_draft(self, draft_id: str) -> MessageDraft | None:
         """Load one draft by identifier from local storage."""
-        row = self.db.get_message_draft(draft_id)
+        row = self.repository.get_message_draft(draft_id)
         if row is None:
             return None
         return self._row_to_message_draft(row)
 
     def save_draft(self, draft: MessageDraft) -> MessageDraft:
         """Persist draft updates and refresh updated timestamp."""
-        refreshed = draft.model_copy(update={"updated_at": datetime.now()})
-        with self.db.transaction() as conn:
-            self.db.upsert_message_draft(conn, refreshed)
+        refreshed = draft.model_copy(update={"updated_at": now_utc()})
+        with self.repository.transaction() as conn:
+            self.repository.upsert_message_draft(conn, refreshed)
         return refreshed
 
     def delete_draft(self, draft_id: str) -> None:
         """Delete one persisted message draft."""
-        with self.db.transaction() as conn:
-            self.db.remove_message_draft(conn, draft_id)
+        with self.repository.transaction() as conn:
+            self.repository.remove_message_draft(conn, draft_id)
 
     @staticmethod
     def _row_to_message_draft(row: dict) -> MessageDraft:
         """Convert a DB row into a MessageDraft model instance."""
         created_raw = str(row.get("created_at") or "")
         updated_raw = str(row.get("updated_at") or "")
-        now = datetime.now()
-        try:
-            created_at = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
-        except Exception:
-            created_at = now
-        try:
-            updated_at = datetime.fromisoformat(updated_raw.replace("Z", "+00:00"))
-        except Exception:
-            updated_at = created_at
+        now = now_utc()
+        created_at = parse_utc_datetime(created_raw, default=now)
+        updated_at = parse_utc_datetime(updated_raw, default=created_at)
 
         return MessageDraft(
             id=str(row.get("id") or ""),

@@ -7,8 +7,9 @@ from typing import Any, Callable, Optional
 from googleapiclient.errors import HttpError
 
 from shmail.models import GmailHistoryResponse
+from shmail.config import settings
 from shmail.services.auth import AuthService
-from shmail.services.db import db
+from shmail.services.db import DatabaseRepository, db
 from shmail.services.gmail import GmailService
 from shmail.services.parser import MessageParser
 
@@ -37,13 +38,13 @@ class SyncService:
     def __init__(
         self,
         email: str,
-        database=None,
+        repository: DatabaseRepository | None = None,
         on_progress: Optional[Callable[[str, Optional[float]], None]] = None,
     ):
         self.email = email
         self.on_progress = on_progress
         self.auth = AuthService(email, on_progress=on_progress)
-        self.db = database or db
+        self.repository: DatabaseRepository = repository or db
         self.parser = MessageParser()
         self._gmail: Optional[GmailService] = None
 
@@ -61,18 +62,20 @@ class SyncService:
         if self.on_progress:
             self.on_progress(message, progress)
 
-    def initial_sync(self) -> None:
-        """Fetch and persist initial labels and messages."""
+    def run_full_sync(self, *, reset_local_messages: bool = False) -> SyncResult:
+        """Fetch a full provider snapshot and reconcile local cache state."""
         self._update_status("Syncing labels...", 0.05)
         self.sync_labels()
 
         self._update_status("Connecting to Gmail API...", 0.08)
         self._update_status("Fetching message list...", 0.1)
-        messages = self.gmail.list_messages()
+        messages = self.gmail.list_messages(max_results=settings.max_messages_cached)
         total = len(messages)
+        parsed_messages = []
+        contacts = []
 
         for i, m in enumerate(messages):
-            progress = 0.1 + ((i + 1) / total) * 0.85
+            progress = 0.1 + ((i + 1) / max(total, 1)) * 0.85
             self._update_status(f"Syncing message {i + 1} of {total}...", progress)
 
             message_data = self.gmail.get_message(m["id"])
@@ -82,29 +85,34 @@ class SyncService:
                 message_data=message_data,
                 label_ids=message_data.get("labelIds", []),
             )
+            parsed_messages.append(parsed.message)
+            contacts.extend(parsed.contacts)
 
-            with self.db.transaction() as conn:
-                self.db.upsert_message(conn, parsed.message)
-                for contact in parsed.contacts:
-                    self.db.upsert_contact(
-                        conn, contact.email, contact.name, contact.timestamp.isoformat()
-                    )
+        profile = self.gmail.get_profile()
+        removed = self.repository.count_messages() if reset_local_messages else 0
+        with self.repository.transaction() as conn:
+            if reset_local_messages:
+                self.repository.reset_message_cache(conn)
+            for message in parsed_messages:
+                self.repository.upsert_message(conn, message)
+            for contact in contacts:
+                self.repository.upsert_contact(
+                    conn, contact.email, contact.name, contact.timestamp.isoformat()
+                )
+            self.repository.set_metadata(conn, "history_id", profile["historyId"])
 
         self._update_status("Initial sync complete.", 1.0)
-        profile = self.gmail.get_profile()
-        with self.db.transaction() as conn:
-            self.db.set_metadata(conn, "history_id", profile["historyId"])
+        return SyncResult(added=len(parsed_messages), removed=removed)
 
     def incremental_sync(self) -> SyncResult:
         """Apply Gmail history deltas since the last successful sync."""
         self._update_status("Checking for changes...", 0.05)
         result = SyncResult()
-        history_id = self.db.get_metadata("history_id")
+        history_id = self.repository.get_metadata("history_id")
 
         if history_id is None:
             self._update_status("No history_id found. Performing initial sync.", 1.0)
-            self.initial_sync()
-            return SyncResult(added=1)
+            return self.run_full_sync(reset_local_messages=False)
 
         self._update_status(f"Starting sync from history_id: {history_id}", 0.1)
         page_token = None
@@ -123,11 +131,11 @@ class SyncService:
                     self._collect_history_operations(record) for record in data.history
                 ]
 
-                with self.db.transaction() as conn:
+                with self.repository.transaction() as conn:
                     for operation in operations:
                         self._apply_history_operations(conn, operation, result)
 
-                    self.db.set_metadata(conn, "history_id", data.historyId)
+                    self.repository.set_metadata(conn, "history_id", data.historyId)
 
                 page_token = data.nextPageToken
                 if not page_token:
@@ -140,9 +148,10 @@ class SyncService:
 
         except HttpError as error:
             if error.resp.status in [404, 410]:
-                logger.warning("History ID expired. Performing full sync...")
-                self.initial_sync()
-                return SyncResult(added=1)
+                logger.warning(
+                    "History ID expired. Performing full cache reconciliation."
+                )
+                return self.run_full_sync(reset_local_messages=True)
             else:
                 logger.error(f"Sync failed with HTTP error: {error}")
                 raise error
@@ -151,10 +160,12 @@ class SyncService:
         """Refresh the local label registry from Gmail."""
         labels = self.gmail.list_labels()
         valid_label_ids = [str(label["id"]) for label in labels if label.get("id")]
-        with self.db.transaction() as conn:
+        with self.repository.transaction() as conn:
             for label in labels:
-                self.db.upsert_label(conn, label["id"], label["name"], label["type"])
-            self.db.prune_labels(conn, valid_label_ids)
+                self.repository.upsert_label(
+                    conn, label["id"], label["name"], label["type"]
+                )
+            self.repository.prune_labels(conn, valid_label_ids)
 
     def _collect_history_operations(self, record) -> HistoryOperation:
         """Collect network-backed record operations before opening a transaction."""
@@ -189,9 +200,9 @@ class SyncService:
         result.added += int(operation.get("added_count", 0))
 
         for parsed in operation.get("added_messages", []):
-            self.db.upsert_message(conn, parsed.message)
+            self.repository.upsert_message(conn, parsed.message)
             for contact in parsed.contacts:
-                self.db.upsert_contact(
+                self.repository.upsert_contact(
                     conn,
                     contact.email,
                     contact.name,
@@ -200,7 +211,7 @@ class SyncService:
 
         for label_change in operation.get("labels_added", []):
             result.labels_changed += 1
-            self.db.update_labels(
+            self.repository.update_labels(
                 conn,
                 label_change.message.id,
                 added_label_ids=label_change.labelIds,
@@ -209,7 +220,7 @@ class SyncService:
 
         for label_change in operation.get("labels_removed", []):
             result.labels_changed += 1
-            self.db.update_labels(
+            self.repository.update_labels(
                 conn,
                 label_change.message.id,
                 added_label_ids=[],
@@ -218,4 +229,4 @@ class SyncService:
 
         for deleted in operation.get("messages_deleted", []):
             result.removed += 1
-            self.db.remove_message(conn, deleted.message.id)
+            self.repository.remove_message(conn, deleted.message.id)

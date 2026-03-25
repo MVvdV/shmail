@@ -1,12 +1,3 @@
-$primary: #bb9af7;
-$secondary: #7aa2f7;
-$background: #1a1b26;
-$surface: #24283b;
-$text: #a9b1d6;
-$success: #9ece6a;
-$error: #f7768e;
-$warning: #ff9e64;
-
 /* Global */
 * {
     scrollbar-size: 1 1;
@@ -20,14 +11,14 @@ $warning: #ff9e64;
 
 Screen {
     background: $background;
-    color: $text;
+    color: $foreground;
 }
 
 /* Shared header/footer shell */
 AppHeader,
 AppFooter {
     background: $surface;
-    color: $text;
+    color: $foreground;
 }
 
 AppHeader {
@@ -65,7 +56,7 @@ AppFooter {
     min-width: 24;
     max-width: 52;
     padding: 0 2 0 0;
-    color: $text 70%;
+    color: $foreground-muted;
 }
 
 #app-account-select > SelectCurrent {
@@ -80,9 +71,11 @@ AppFooter {
 }
 
 #app-version,
-#thread-version {
+#thread-version,
+#message-draft-version {
     width: auto;
     padding: 0 2;
+    color: $foreground-muted;
 }
 
 /* Shared shortcut rendering */
@@ -102,19 +95,19 @@ AppFooter {
 }
 
 .shortcut-key {
-    color: $text;
+    color: $foreground;
     text-style: bold;
     padding-left: 1;
 }
 
 .shortcut-label {
-    color: $text 80%;
+    color: $foreground-muted;
     text-style: italic;
     padding-left: 1;
 }
 
 .shortcut-separator {
-    color: $text 40%;
+    color: $foreground-disabled;
     padding-left: 1;
 }
 
@@ -122,7 +115,7 @@ AppFooter {
 #labels-sidebar {
     width: 30;
     height: 100%;
-    border-right: solid $secondary;
+    border-right: solid $panel 40%;
 }
 
 #labels-sidebar-list {
@@ -136,7 +129,7 @@ AppFooter {
 
 LabelHeader {
     height: 1;
-    border-top: solid $secondary;
+    border-top: solid $panel 40%;
     border-title-align: left;
     padding: 0 1;
     margin-top: 1;
@@ -157,7 +150,7 @@ LabelItem {
 .label-count {
     width: auto;
     padding-left: 1;
-    color: $text 60%;
+    color: $foreground-muted;
 }
 
 LabelItem.unread .label-name,
@@ -176,7 +169,7 @@ LabelItem.selected .label-count {
 }
 
 #labels-sidebar ListView:focus > ListItem.-highlight {
-    background: $surface;
+    background: $panel 18%;
 }
 
 #labels-sidebar ListView:focus > ListItem.-highlight .label-name,
@@ -213,7 +206,7 @@ LabelItem.selected .label-count {
     height: 1;
     width: 100%;
     content-align: center middle;
-    color: $text 40%;
+    color: $foreground-disabled;
     text-style: bold;
 }
 
@@ -254,7 +247,7 @@ LabelItem.selected .label-count {
 .thread-sender-email {
     width: 1fr;
     padding-left: 1;
-    color: $text 40%;
+    color: $foreground-muted;
     text-overflow: ellipsis;
     overflow: hidden;
     text-wrap: nowrap;
@@ -263,13 +256,13 @@ LabelItem.selected .label-count {
 .thread-date {
     width: auto;
     padding-left: 1;
-    color: $text 40%;
+    color: $foreground-muted;
     content-align: right middle;
 }
 
 .thread-subject {
     height: 1;
-    color: $text;
+    color: $foreground;
     text-overflow: ellipsis;
     overflow: hidden;
     text-wrap: nowrap;
@@ -277,7 +270,7 @@ LabelItem.selected .label-count {
 
 .thread-snippet {
     height: 1;
-    color: $text 60%;
+    color: $foreground-muted;
     text-overflow: ellipsis;
     overflow: hidden;
     text-wrap: nowrap;
@@ -288,7 +281,7 @@ LabelItem.selected .label-count {
 }
 
 #threads-list:focus > ListItem.-highlight {
-    background: $surface;
+    background: $panel 18%;
     color: $primary;
     text-style: bold;
 }
@@ -296,7 +289,7 @@ LabelItem.selected .label-count {
 /* Thread viewer modal */
 ThreadMessagesScreen {
     align: center middle;
-    background: rgba(0, 0, 0, 0.5);
+    background: $background 55%;
 }
 
 #thread-modal-container {
@@ -305,6 +298,7 @@ ThreadMessagesScreen {
     height: 100%;
     margin: 2 4;
     background: $surface;
+    border: round $panel 40%;
 }
 
 #thread-stack {
@@ -323,33 +317,39 @@ ThreadMessagesScreen {
     width: 100%;
     height: 1;
     background: $surface;
-    color: $text;
+    color: $foreground;
+}
+
+#thread-version,
+#message-draft-version {
+    display: none;
 }
 
 #thread-footer #thread-shortcuts {
     text-style: italic;
-    color: $text 80%;
+    color: $foreground-muted;
 }
 
 /* Message draft modal */
 MessageDraftScreen,
-ThreadComposeActionChooserScreen {
+MessageDraftDiscardConfirmScreen {
     align: center middle;
-    background: rgba(0, 0, 0, 0.5);
+    background: $background 55%;
 }
 
 #message-draft-modal-container {
     width: 100%;
-    max-width: 112;
+    max-width: 96;
     height: 100%;
     margin: 2 4;
     background: $surface;
+    border: round $panel 40%;
 }
 
 #message-draft-header-fields {
     height: auto;
     padding: 1 2;
-    border-bottom: solid $background;
+    border-bottom: solid $panel 40%;
 }
 
 #message-draft-header-fields Input {
@@ -367,17 +367,14 @@ ThreadComposeActionChooserScreen {
     width: 1fr;
     height: 1fr;
     background: $background;
+    color: $foreground;
+    overflow-y: auto;
 }
 
 #message-draft-footer {
     width: 1fr;
     height: 1;
     background: $surface;
-}
-
-#message-draft-version {
-    width: auto;
-    padding: 0 2;
 }
 
 #message-draft-shortcuts {
@@ -388,37 +385,44 @@ ThreadComposeActionChooserScreen {
     padding: 0 2;
 }
 
-/* Thread compose action chooser */
-#thread-compose-action-modal {
-    width: 60;
+/* Draft discard confirmation */
+#message-draft-discard-modal {
+    width: 64;
     height: auto;
     max-height: 20;
     background: $surface;
-    border: round $secondary;
+    border: round $warning;
     padding: 1 1 0 1;
 }
 
-#thread-compose-action-title {
+#message-draft-discard-title {
     width: 1fr;
     padding: 0 1 1 1;
-    color: $primary;
+    color: $warning;
     text-style: bold;
 }
 
-#thread-compose-action-list {
+#message-draft-discard-body {
+    width: 1fr;
+    height: auto;
+    padding: 0 1 1 1;
+    color: $foreground;
+}
+
+#message-draft-discard-list {
     width: 1fr;
     height: auto;
     max-height: 10;
     background: transparent;
 }
 
-#thread-compose-action-list:focus > ListItem.-highlight {
-    background: $background;
-    color: $primary;
+#message-draft-discard-list:focus > ListItem.-highlight {
+    background: $panel 18%;
+    color: $warning;
     text-style: bold;
 }
 
-#thread-compose-action-shortcuts {
+#message-draft-discard-shortcuts {
     width: 1fr;
     height: 1;
     layout: horizontal;
@@ -431,7 +435,7 @@ ThreadComposeActionChooserScreen {
 MessageItem {
     width: 100%;
     height: auto;
-    border: solid $surface;
+    border: solid $panel 40%;
     background: $surface;
     margin-bottom: 1;
 }
@@ -464,19 +468,19 @@ MessageItem.-draft .message-subject {
 
 .message-from,
 .message-to {
-    color: $text 60%;
+    color: $foreground-muted;
     text-style: italic;
 }
 
 .message-date {
-    color: $text 40%;
+    color: $foreground-muted;
     content-align: right top;
 }
 
 .message-interaction-bar {
     height: auto;
     margin: 1 2 0 2;
-    color: $secondary;
+    color: $accent;
     text-style: italic;
     display: none;
 }
@@ -488,7 +492,7 @@ MessageItem.-draft .message-interaction-bar {
 .message-markdown {
     height: auto;
     padding: 1 2;
-    border-top: solid $background;
+    border-top: solid $panel 40%;
     background: $background;
     display: none;
 }
@@ -504,14 +508,14 @@ MessageItem.-expanded .message-markdown {
 /* Markdown theme */
 Markdown {
     background: transparent;
-    color: $text;
+    color: $foreground;
 }
 
 Markdown > Link {
-    color: $secondary;
+    color: $accent;
 }
 
 MarkdownBlockQuote {
-    border-left: outer $secondary 60%;
-    background: $surface 30%;
+    border-left: outer $accent 60%;
+    background: $panel 30%;
 }

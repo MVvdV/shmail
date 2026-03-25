@@ -6,6 +6,7 @@ from textual.message import Message
 from textual.widgets import ListItem, ListView, Static
 
 from shmail.config import settings
+from shmail.widgets.shortcuts import binding_choices_label, movement_pair_label
 
 if TYPE_CHECKING:
     from shmail.app import ShmailApp
@@ -43,6 +44,13 @@ class LabelItem(ListItem):
 
     def compose(self):
         """Constructs the label text with hierarchical connectors."""
+        yield Static(self._compose_label_text(), classes="label-name", markup=False)
+
+        count_text = f"({self.count})" if self.count > 0 else ""
+        yield Static(count_text, classes="label-count", markup=False)
+
+    def _compose_label_text(self) -> str:
+        """Build the visible label text with hierarchical indentation."""
         if self.depth <= 1:
             indent = "  " * self.depth
             connector = ""
@@ -53,11 +61,7 @@ class LabelItem(ListItem):
         if self.count > 0:
             self.add_class("unread")
 
-        label_text = f"{indent}{connector}{self.display_name}"
-        yield Static(label_text, classes="label-name", markup=False)
-
-        count_text = f"({self.count})" if self.count > 0 else ""
-        yield Static(count_text, classes="label-count", markup=False)
+        return f"{indent}{connector}{self.display_name}"
 
     def set_count(self, count: int) -> None:
         """Update count text in-place for this label row."""
@@ -80,23 +84,42 @@ class LabelsSidebar(Vertical):
     can_focus = False
 
     BINDINGS = [
-        Binding("[", "shrink_labels", "Shrink Labels", show=False),
-        Binding("]", "expand_labels", "Expand Labels", show=False),
+        Binding(
+            settings.keybindings.resize_narrow,
+            "shrink_labels",
+            "Shrink Labels",
+            show=False,
+        ),
+        Binding(
+            settings.keybindings.resize_wide,
+            "expand_labels",
+            "Expand Labels",
+            show=False,
+        ),
         Binding(settings.keybindings.up, "cursor_up", "Previous Label", show=False),
         Binding(settings.keybindings.down, "cursor_down", "Next Label", show=False),
-        Binding("g", "first_label", "First Label", show=False),
-        Binding("G", "last_label", "Last Label", show=False),
+        Binding(settings.keybindings.first, "first_label", "First Label", show=False),
+        Binding(settings.keybindings.last, "last_label", "Last Label", show=False),
     ]
 
     def get_shortcuts(self) -> list[tuple[str, str]]:
-        """Returns the active shortcuts for the Labels pane."""
+        """Return the active shortcuts for the labels pane."""
         return [
-            ("ENTER", "Select"),
-            ("C", "Compose"),
-            ("J/K", "Move"),
-            ("G/g", "Top/End"),
-            ("TAB", "Threads"),
-            ("[/]", "Resize"),
+            (binding_choices_label(settings.keybindings.select, "ENTER"), "Select"),
+            (binding_choices_label(settings.keybindings.compose, "C"), "New"),
+            (
+                movement_pair_label(settings.keybindings.up, settings.keybindings.down),
+                "Move",
+            ),
+            (
+                f"{binding_choices_label(settings.keybindings.first, 'G')}/{binding_choices_label(settings.keybindings.last, 'SHIFT+G')}",
+                "Home/End",
+            ),
+            (binding_choices_label(settings.keybindings.pane_next, "TAB"), "Threads"),
+            (
+                f"{binding_choices_label(settings.keybindings.resize_narrow, '[')}/{binding_choices_label(settings.keybindings.resize_wide, ']')}",
+                "Resize",
+            ),
         ]
 
     @property
@@ -114,6 +137,7 @@ class LabelsSidebar(Vertical):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.label_list = ListView(id="labels-sidebar-list")
+        self._active_label_id: str | None = None
 
     def compose(self):
         """Yields the labels list view."""
@@ -152,12 +176,6 @@ class LabelsSidebar(Vertical):
     def on_mount(self):
         """Populates labels from the database on mount."""
         self.refresh_labels()
-        if hasattr(type(self.shmail_app), "drafts_revision"):
-            self.watch(self.shmail_app, "drafts_revision", self._on_drafts_revision)
-
-    def _on_drafts_revision(self, _revision: int) -> None:
-        """Refresh label counts after local draft state changes."""
-        self.refresh_labels()
 
     def refresh_labels(self) -> None:
         """Reload label rows while preserving current selected label."""
@@ -170,6 +188,8 @@ class LabelsSidebar(Vertical):
 
     def _get_selected_label_id(self) -> str | None:
         """Return selected label identifier from current list state."""
+        if self._active_label_id:
+            return self._active_label_id
         for child in self.label_list.children:
             if isinstance(child, LabelItem) and child.has_class("selected"):
                 return child.label_id
@@ -180,22 +200,30 @@ class LabelsSidebar(Vertical):
                 return item.label_id
         return None
 
-    def update_draft_count(self, count: int) -> None:
-        """Update DRAFT label count without reloading all labels."""
+    def _load_labels_worker(self, selected_label_id: str | None) -> None:
+        """Loads labels in a worker thread and mounts results on UI thread."""
+        labels = self.shmail_app.label_state.refresh()
+        self.app.call_from_thread(self._populate_labels, labels, selected_label_id)
+
+    def apply_label_patch(self, label: dict) -> None:
+        """Apply one targeted label-state patch without rebuilding the full list."""
+        label_id = str(label.get("id") or "")
+        unread_count = int(label.get("unread_count") or 0)
+        display_name = str(label.get("name") or "")
         for child in self.label_list.children:
             if not isinstance(child, LabelItem):
                 continue
-            label_id = str(child.label_id).upper()
-            label_name = str(child.display_name).upper()
-            if label_id == "DRAFT" or label_name.startswith("DRAFT"):
-                child.set_count(count)
-                return
+            if str(child.label_id) != label_id:
+                continue
+            child.display_name = display_name or child.display_name
+            child.set_count(unread_count)
+            try:
+                name_widget = child.query_one(".label-name", Static)
+                name_widget.update(child._compose_label_text())
+            except Exception:
+                pass
+            return
         self.refresh_labels()
-
-    def _load_labels_worker(self, selected_label_id: str | None) -> None:
-        """Loads labels in a worker thread and mounts results on UI thread."""
-        labels = self.shmail_app.db.get_labels_with_counts()
-        self.app.call_from_thread(self._populate_labels, labels, selected_label_id)
 
     def _populate_labels(
         self, labels: list[dict], selected_label_id: str | None
@@ -320,17 +348,35 @@ class LabelsSidebar(Vertical):
         target_index = selected_index if selected_index >= 0 else inbox_index
         if target_index >= 0:
             self.label_list.index = target_index
-            self.label_list.focus()
             item = self.label_list.children[target_index]
             if isinstance(item, LabelItem):
-                item.add_class("selected")
+                self._set_active_label(item.label_id)
                 self.post_message(self.LabelSelected(item.label_id))
 
     def on_list_view_selected(self, event: ListView.Selected):
         """Handles label selection and manages persistent visual state."""
         if isinstance(event.item, LabelItem):
-            for child in self.label_list.query(LabelItem):
+            self._set_active_label(event.item.label_id)
+            self.post_message(self.LabelSelected(event.item.label_id))
+
+    def on_descendant_focus(self, _event) -> None:
+        """Sync cursor position to the active label when sidebar regains focus."""
+        self._sync_cursor_to_active_label()
+
+    def _set_active_label(self, label_id: str) -> None:
+        """Mark one label as active and clear stale active styling."""
+        self._active_label_id = label_id
+        for child in self.label_list.query(LabelItem):
+            if child.label_id == label_id:
+                child.add_class("selected")
+            else:
                 child.remove_class("selected")
 
-            event.item.add_class("selected")
-            self.post_message(self.LabelSelected(event.item.label_id))
+    def _sync_cursor_to_active_label(self) -> None:
+        """Move the sidebar cursor onto the active label when possible."""
+        if not self._active_label_id:
+            return
+        for index, child in enumerate(self.label_list.children):
+            if isinstance(child, LabelItem) and child.label_id == self._active_label_id:
+                self.label_list.index = index
+                return
