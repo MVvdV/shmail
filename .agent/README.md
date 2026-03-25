@@ -1,25 +1,42 @@
-# Project Agentic Structure
-This folder contains the project framework registry and governance contracts.
+# Agent Guide
 
-## File Map
-- `system.md`: Switchboard for active primaries, workflows, subagents, and contracts.
-- `context.md`: Project architecture and boundaries.
-- `roadmap.md`: Session memory and handoff history.
-- `roles/`: Primary role instructions. Tutor is the active custom primary role.
-- `rules/`: Technical standards inherited from `~/.agent/styles/`.
-- `contracts/`: Universal migration and interaction standards.
-- `catalog/`: Human-readable indexes for workflows and subagents.
-- `security.md`: Local pointer to global security policy.
+This directory contains project-specific agent memory, rules, and operating contracts.
 
-## Runtime Model
-- **Primaries**: OpenCode built-in `plan` and `build`, plus custom `tutor`.
-- **Workflows**: Invoked with `/` from `.opencode/commands/`.
-- **Subagents**: Invoked with `@` from `.opencode/agents/` (`mode: subagent`).
-- **Upgrade Command**: `/upgrade-framework [target_scope] [target_path] [source_path]` with required preflight confirmation.
-- **Upgrade Harvesting**: `/upgrade-framework` includes discovery/harvest for non-standard instruction docs before mapping.
+## Purpose
 
-## Inheritance Logic
-This project uses explicit pointers. Files in `roles/`, `rules/`, and `contracts/` may inherit from `~/.agent/` and then apply local overrides.
+- `system.md` defines the active framework entrypoints and runtime expectations
+- `context.md` captures architecture, boundaries, and project-level patterns
+- `roadmap.md` is the session memory and handoff log
+- `rules/` contains local engineering rules layered on top of shared global styles
 
-## Initialization
-When an agent enters this project, first read `.agent/system.md`, then `.agent/context.md`, then `.agent/roadmap.md`, return state, and wait for explicit user instruction before any edits.
+## Startup order
+
+When starting work in this repository, read these files in order:
+
+1. `.agent/system.md`
+2. `.agent/context.md`
+3. `.agent/roadmap.md`
+
+After reading them, report the current state and wait for explicit user direction before editing.
+
+## Current architectural patterns
+
+- `DatabaseRepository` owns storage primitives only
+- domain services own workflow and mutation rules
+- query services shape UI-facing reads
+- UI should prefer `UI -> service/query service -> repository -> database`
+- targeted low-flicker patches should flow through one shared state/update authority, not ad hoc widget logic
+
+## Files in this directory
+
+- `system.md`: framework/runtime contract
+- `context.md`: architecture map and project boundaries
+- `roadmap.md`: roadmap, session state, and handoff history
+- `rules/python.md`: Python-specific project overrides
+- `rules/textual.md`: Textual-specific project overrides
+
+## Notes
+
+- Keep user-facing project documentation in the repo root `README.md`
+- Keep agent/process/governance guidance in `.agent/`
+- When architecture changes materially, update both `context.md` and `roadmap.md`

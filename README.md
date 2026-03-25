@@ -1,23 +1,71 @@
-## Shmail
+# Shmail
 
-Keyboard-first terminal email client built with Textual.
+Email for people who live on the keyboard.
 
-## Development
+Shmail is a terminal email client designed to feel focused, fast, and deliberate. It brings together the speed of a TUI, the readability of a modern mail app, and the reliability of local-first state so you can triage, read, and draft without fighting your tools.
 
-- Install deps: `uv sync`
-- Run app: `uv run python -m shmail.app`
-- Run tests: `uv run pytest`
-- Lint: `uv run ruff check shmail tests`
-- Type check: `uv run pyright`
+This is not trying to be a nostalgic terminal clone. Shmail is aiming for a cleaner kind of terminal mail experience: structured, visually intentional, deterministic in behavior, and comfortable to use for long stretches of real work.
+
+## Why Shmail
+
+- Keyboard-first from the start. Labels, threads, messages, links, and drafts all support deliberate keyboard navigation.
+- Calm thread reading. One active message, one clear focus target, one consistent interaction model.
+- Local-first drafting. Compose feels immediate, autosaves locally, and gives you explicit control over save, discard, and delete behavior.
+- Themeable without hacks. Shmail supports built-in presets, compatible palette files, and environment-aware theme sources.
+- Built to feel like a product. The goal is not just capability - it is confidence, clarity, and polish.
+
+## What it feels like
+
+- Fast inbox triage from the terminal
+- Predictable thread reading with keyboard link traversal
+- Low-flicker updates instead of noisy redraws
+- Offline-friendly drafting with durable local state
+- A UI that can match your environment instead of forcing one look and feel
+
+## Current scope
+
+Shmail currently focuses on:
+
+- Gmail sync into a local SQLite cache
+- keyboard-first thread reading and triage
+- local-first compose and draft workflows
+- configurable themes and keybindings
+
+Outbound mutation sync-back and broader provider support are planned, but still ahead on the roadmap.
+
+## Get started
+
+Requirements:
+
+- Python `3.14+`
+- `uv`
+
+Install and run:
+
+```bash
+uv sync
+uv run python -m shmail.app
+```
 
 ## Configuration
 
-- Config lives in `~/.config/shmail/config.toml`.
-- On Omarchy systems, first-run defaults follow the active Omarchy theme from `~/.config/omarchy/current/theme/colors.toml` when available.
-- Shmail ships preset support for the standard Omarchy themes: `catppuccin-latte`, `catppuccin`, `ethereal`, `everforest`, `flexoki-light`, `gruvbox`, `hackerman`, `kanagawa`, `lumon`, `matte-black`, `miasma`, `nord`, `osaka-jade`, `ristretto`, `rose-pine`, `tokyo-night`, `vantablack`, and `white`.
-- `source = "directory"` searches a named theme folder in `theme.theme_directory` when provided, otherwise in Omarchy-compatible roots such as `~/.config/omarchy/themes` and `~/.local/share/omarchy/themes`.
+Configuration lives in `~/.config/shmail/config.toml`.
 
-Preset theme example:
+### Themes
+
+Shmail supports four theme source modes:
+
+- `preset` - use a built-in named preset
+- `current` - follow the active compatible system theme when available
+- `directory` - load a named theme from a theme directory
+- `file` - load a specific `colors.toml`
+
+Shmail ships support for the standard Omarchy presets:
+`catppuccin-latte`, `catppuccin`, `ethereal`, `everforest`, `flexoki-light`, `gruvbox`, `hackerman`, `kanagawa`, `lumon`, `matte-black`, `miasma`, `nord`, `osaka-jade`, `ristretto`, `rose-pine`, `tokyo-night`, `vantablack`, and `white`.
+
+For `source = "directory"`, Shmail searches `theme.theme_directory` when provided, then compatible theme roots such as `~/.config/omarchy/themes` and `~/.local/share/omarchy/themes`.
+
+Preset theme:
 
 ```toml
 [theme]
@@ -25,7 +73,7 @@ name = "tokyo-night"
 source = "preset"
 ```
 
-Follow the active Omarchy theme automatically:
+Follow the active compatible system theme:
 
 ```toml
 [theme]
@@ -33,7 +81,7 @@ name = "tokyo-night"
 source = "current"
 ```
 
-Load a named compatible theme directory:
+Load a named theme directory:
 
 ```toml
 [theme]
@@ -41,7 +89,7 @@ name = "kanagawa"
 source = "directory"
 ```
 
-Load a custom Omarchy-style `colors.toml` and override only selected tokens:
+Load a direct palette file with partial overrides:
 
 ```toml
 [theme]
@@ -54,7 +102,9 @@ warning = "#ffcc66"
 panel = "#303446"
 ```
 
-Keybindings are configurable in the same file:
+### Keybindings
+
+Keybindings are configurable in the same file.
 
 ```toml
 [keybindings]
@@ -77,31 +127,31 @@ thread_cycle_backward = "shift+tab"
 compose_preview_toggle = "f2"
 ```
 
-## Engineering standards
+## Need to know
 
-- Deterministic keyboard UX is a product contract; focus, traversal, and modal behavior must remain explicit and test-covered.
-- Blocking Gmail and SQLite work must run off the UI thread via Textual workers with safe UI-thread handoff.
-- Persisted and ordering-critical timestamps must be UTC-aware and normalized through shared helpers.
-- Local-first compose and draft flows must remain durable, deterministic, and race-tested.
-- Canonical message rendering and `body_links` extraction must stay aligned through one shared markdown contract.
-- Public modules, classes, and methods should use semantically correct PEP 257-style docstrings and precise domain naming.
-- Dead config/runtime/documentation surfaces should be removed or wired during adjacent refactors.
-- Theme styling should be driven by runtime theme variables and Omarchy-compatible palette inputs wherever practical.
-- User-visible shortcut copy should derive from configured keybindings instead of diverging hardcoded labels.
+For people who want the technical shape without reading the whole codebase:
 
-## Current hardening priorities
+- Storage uses SQLite with WAL mode for local caching.
+- Blocking work is pushed off the UI thread through Textual workers.
+- Drafts are local-first and follow explicit lifecycle rules for save, discard, restore, and delete.
+- Time handling is normalized around UTC-aware timestamps.
+- UI reads are being pushed behind query services so screens and widgets stay thinner and more deterministic.
+- Theme resolution is runtime-driven and compatible with Omarchy-style palette files without making Omarchy a hard dependency.
 
-- Fix expired-history fallback reconciliation so local cache truth cannot drift after sync recovery.
-- Centralize timestamp normalization and display formatting to remove mixed naive/aware behavior.
-- Unify draft/thread/sidebar refresh authority instead of duplicating redraw choreography across views.
-- Align runtime theming with configured theme intent.
-- Consolidate repeated footer, chooser, focus, and helper patterns to keep the UI layer lean.
+## Development
 
-## Current foundations
+```bash
+uv run pytest
+uv run ruff check shmail tests
+uv run pyright
+```
 
-- Gmail sync with local SQLite cache (WAL mode)
-- Thread viewer with deterministic keyboard link traversal and strict accordion expansion
-- HTML-first body conversion via `inscriptis`
-- Canonical persisted `body_links` extracted from rendered markdown tokens (order-preserving, no collapse)
-- Shared markdown parser contract between extraction and viewer rendering
-- Active keyboard link marker rendered inline as `【↗ label 】`
+## Direction
+
+Current work is focused on:
+
+- deterministic UI behavior and low-flicker targeted updates
+- stronger repository/service/query-service boundaries
+- theme robustness and compatibility
+- local-first compose and draft correctness
+- outbound mutation and provider sync-back architecture
