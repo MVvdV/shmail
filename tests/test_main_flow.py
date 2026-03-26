@@ -17,6 +17,7 @@ from shmail.screens.message_draft import (
     MessageDraftScreen,
     MessageDraftSeed,
 )
+from shmail.screens.label_editor import LabelEditScreen
 from shmail.screens import MainScreen
 from shmail.widgets import (
     AppHeader,
@@ -940,17 +941,161 @@ def test_compose_preview_normalization_preserves_single_newlines_outside_code():
     assert "```\nline1\nline2\n```" in preview
 
 
+def test_new_label_modal_creates_nested_user_label(test_db):
+    """Verify the labels pane can create one nested custom label via modal."""
+    with test_db.transaction() as conn:
+        test_db.upsert_label(conn, "INBOX", "Inbox", "system")
+        test_db.upsert_label(conn, "projects", "Projects", "user")
+
+    async def run_test():
+        app = MockApp(test_db)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            labels_sidebar = app.screen.query_one("#labels-sidebar", LabelsSidebar)
+            labels_sidebar.label_list.focus()
+            await pilot.pause()
+
+            await pilot.press("n")
+            await pilot.pause()
+
+            assert isinstance(app.screen, LabelEditScreen)
+            app.screen.query_one("#label-name", Input).value = "Shmail"
+            parent_select = app.screen.query_one("#label-parent", Select)
+            parent_select.value = "projects"
+            await pilot.pause()
+
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert isinstance(app.screen, MainScreen)
+            created = next(
+                label
+                for label in test_db.get_labels()
+                if label["name"] == "Projects/Shmail"
+            )
+            item = find_node_by_data(labels_sidebar, created["id"])
+            assert item is not None
+            assert item.display_name == "Shmail"
+
+    asyncio.run(run_test())
+
+
+def test_edit_label_modal_updates_selected_user_label(test_db):
+    """Verify editing a custom label updates the sidebar and local storage."""
+    with test_db.transaction() as conn:
+        test_db.upsert_label(conn, "INBOX", "Inbox", "system")
+        test_db.upsert_label(conn, "projects", "Projects", "user")
+        test_db.upsert_label(conn, "project_old", "Projects/Old Name", "user")
+
+    async def run_test():
+        app = MockApp(test_db)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            labels_sidebar = app.screen.query_one("#labels-sidebar", LabelsSidebar)
+            label_item = find_node_by_data(labels_sidebar, "project_old")
+            assert label_item is not None
+            labels_sidebar.label_list.focus()
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+
+            await pilot.press("e")
+            await pilot.pause()
+
+            assert isinstance(app.screen, LabelEditScreen)
+            name_field = app.screen.query_one("#label-name", Input)
+            name_field.value = "Renamed"
+            await pilot.pause()
+
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert isinstance(app.screen, MainScreen)
+            stored = test_db.get_label("project_old")
+            assert stored is not None
+            assert stored["name"] == "Projects/Renamed"
+
+            renamed_item = find_node_by_data(labels_sidebar, "project_old")
+            assert renamed_item is not None
+            assert renamed_item.display_name == "Renamed"
+
+    asyncio.run(run_test())
+
+
+def test_edit_label_on_system_label_warns_and_stays_in_main(test_db):
+    """Verify system labels cannot enter the editable label modal."""
+    with test_db.transaction() as conn:
+        test_db.upsert_label(conn, "INBOX", "Inbox", "system")
+
+    async def run_test():
+        app = MockApp(test_db)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            labels_sidebar = app.screen.query_one("#labels-sidebar", LabelsSidebar)
+            inbox_item = find_node_by_data(labels_sidebar, "INBOX")
+            assert inbox_item is not None
+            labels_sidebar.label_list.index = labels_sidebar.label_list.children.index(
+                inbox_item
+            )
+            labels_sidebar.label_list.focus()
+            await pilot.pause()
+
+            await pilot.press("e")
+            await pilot.pause()
+
+            assert isinstance(app.screen, MainScreen)
+            assert app.notifications[-1] == (
+                "System labels cannot be modified.",
+                "warning",
+            )
+
+    asyncio.run(run_test())
+
+
+def test_new_label_keybinding_works_from_thread_list_focus(test_db):
+    """Verify the global new-label shortcut works while the thread list is focused."""
+    with test_db.transaction() as conn:
+        test_db.upsert_label(conn, "INBOX", "Inbox", "system")
+
+    async def run_test():
+        app = MockApp(test_db)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            thread_list = app.screen.query_one("#threads-list", ThreadList)
+            thread_list.focus()
+            await pilot.pause()
+
+            await pilot.press(settings.keybindings.label_new)
+            await pilot.pause()
+
+            assert isinstance(app.screen, LabelEditScreen)
+
+    asyncio.run(run_test())
+
+
 def test_shortcut_labels_follow_configured_bindings(monkeypatch):
     """Ensure user-facing shortcut labels reflect configured bindings."""
     original_first = settings.keybindings.first
     original_last = settings.keybindings.last
     original_pane_next = settings.keybindings.pane_next
     original_cycle_forward = settings.keybindings.thread_cycle_forward
+    original_label_new = settings.keybindings.label_new
+    original_label_edit = settings.keybindings.label_edit
     try:
         settings.keybindings.first = "home"
         settings.keybindings.last = "end"
         settings.keybindings.pane_next = "ctrl+l"
         settings.keybindings.thread_cycle_forward = "n"
+        settings.keybindings.label_new = "ctrl+n"
+        settings.keybindings.label_edit = "ctrl+e"
 
         labels_shortcuts = LabelsSidebar().get_shortcuts()
         thread_shortcuts = ThreadList().get_shortcuts()
@@ -963,12 +1108,14 @@ def test_shortcut_labels_follow_configured_bindings(monkeypatch):
             }
         ).get_shortcuts()
 
-        assert ("HOME/END", "Home/End") in labels_shortcuts
-        assert ("CTRL+L", "Threads") in labels_shortcuts
-        assert ("HOME/END", "Home/End") in thread_shortcuts
-        assert any(shortcut[0].startswith("N/") for shortcut in message_shortcuts)
+        assert ("Home/End", "Home/End") in labels_shortcuts
+        assert ("Ctrl+l", "Threads") in labels_shortcuts
+        assert ("Home/End", "Home/End") in thread_shortcuts
+        assert any(shortcut[0].startswith("n/") for shortcut in message_shortcuts)
     finally:
         settings.keybindings.first = original_first
         settings.keybindings.last = original_last
         settings.keybindings.pane_next = original_pane_next
         settings.keybindings.thread_cycle_forward = original_cycle_forward
+        settings.keybindings.label_new = original_label_new
+        settings.keybindings.label_edit = original_label_edit

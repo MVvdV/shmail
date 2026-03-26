@@ -55,6 +55,37 @@ class GmailService:
             logger.exception("Failed to list labels")
             raise
 
+    def create_label(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Create one user label and return the provider response."""
+        try:
+            return (
+                self.service.users().labels().create(userId="me", body=body).execute()
+            )
+        except Exception:
+            logger.exception("Failed to create label")
+            raise
+
+    def patch_label(self, label_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Patch one label and return the provider response."""
+        try:
+            return (
+                self.service.users()
+                .labels()
+                .patch(userId="me", id=label_id, body=body)
+                .execute()
+            )
+        except Exception:
+            logger.exception("Failed to patch label: %s", label_id)
+            raise
+
+    def delete_label(self, label_id: str) -> None:
+        """Delete one label from the provider."""
+        try:
+            self.service.users().labels().delete(userId="me", id=label_id).execute()
+        except Exception:
+            logger.exception("Failed to delete label: %s", label_id)
+            raise
+
     def get_profile(self) -> Dict[str, Any]:
         """Return Gmail profile metadata for the current account."""
         try:

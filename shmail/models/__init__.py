@@ -10,6 +10,10 @@ class Label(BaseModel):
     id: str
     name: str
     type: str
+    label_list_visibility: Optional[str] = None
+    message_list_visibility: Optional[str] = None
+    background_color: Optional[str] = None
+    text_color: Optional[str] = None
 
 
 class Message(BaseModel):

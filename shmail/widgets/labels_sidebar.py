@@ -6,6 +6,8 @@ from textual.message import Message
 from textual.widgets import ListItem, ListView, Static
 
 from shmail.config import settings
+from shmail.screens.label_editor import LabelEditScreen, LabelEditorSeed
+from shmail.services.label_state import LabelMutationResult
 from shmail.widgets.shortcuts import binding_choices_label, movement_pair_label
 
 if TYPE_CHECKING:
@@ -34,6 +36,7 @@ class LabelItem(ListItem):
         count: int = 0,
         depth: int = 0,
         is_last_child: bool = False,
+        background_color: str | None = None,
     ):
         super().__init__()
         self.display_name = display_name
@@ -41,9 +44,11 @@ class LabelItem(ListItem):
         self.count = count
         self.depth = depth
         self.is_last_child = is_last_child
+        self.background_color = background_color
 
     def compose(self):
         """Constructs the label text with hierarchical connectors."""
+        yield Static("■" if self.background_color else " ", classes="label-color-chip")
         yield Static(self._compose_label_text(), classes="label-name", markup=False)
 
         count_text = f"({self.count})" if self.count > 0 else ""
@@ -77,6 +82,16 @@ class LabelItem(ListItem):
             return
         count_widget.update(f"({count})" if count > 0 else "")
 
+    def on_mount(self) -> None:
+        """Render an optional swatch for custom Gmail label colors."""
+        if not self.background_color:
+            return
+        try:
+            swatch = self.query_one(".label-color-chip", Static)
+        except Exception:
+            return
+        swatch.styles.color = self.background_color
+
 
 class LabelsSidebar(Vertical):
     """A navigation pane for Gmail labels organized by category and hierarchy."""
@@ -100,13 +115,16 @@ class LabelsSidebar(Vertical):
         Binding(settings.keybindings.down, "cursor_down", "Next Label", show=False),
         Binding(settings.keybindings.first, "first_label", "First Label", show=False),
         Binding(settings.keybindings.last, "last_label", "Last Label", show=False),
+        Binding(settings.keybindings.label_new, "new_label", "New Label", show=False),
+        Binding(
+            settings.keybindings.label_edit, "edit_label", "Edit Label", show=False
+        ),
     ]
 
     def get_shortcuts(self) -> list[tuple[str, str]]:
         """Return the active shortcuts for the labels pane."""
-        return [
+        shortcuts = [
             (binding_choices_label(settings.keybindings.select, "ENTER"), "Select"),
-            (binding_choices_label(settings.keybindings.compose, "C"), "New"),
             (
                 movement_pair_label(settings.keybindings.up, settings.keybindings.down),
                 "Move",
@@ -121,6 +139,15 @@ class LabelsSidebar(Vertical):
                 "Resize",
             ),
         ]
+        if self._current_cursor_label_is_editable():
+            shortcuts.insert(
+                1,
+                (
+                    binding_choices_label(settings.keybindings.label_edit, "e"),
+                    "Edit label",
+                ),
+            )
+        return shortcuts
 
     @property
     def shmail_app(self) -> "ShmailApp":
@@ -158,28 +185,36 @@ class LabelsSidebar(Vertical):
     def action_cursor_up(self) -> None:
         """Moves the selection cursor up."""
         self.label_list.action_cursor_up()
+        self._refresh_footer_shortcuts()
 
     def action_cursor_down(self) -> None:
         """Moves the selection cursor down."""
         self.label_list.action_cursor_down()
+        self._refresh_footer_shortcuts()
 
     def action_first_label(self) -> None:
         """Jumps to the first label."""
         if len(self.label_list) > 0:
             self.label_list.index = 0
+            self._refresh_footer_shortcuts()
 
     def action_last_label(self) -> None:
         """Jumps to the last label."""
         if len(self.label_list) > 0:
             self.label_list.index = len(self.label_list) - 1
+            self._refresh_footer_shortcuts()
 
     def on_mount(self):
         """Populates labels from the database on mount."""
         self.refresh_labels()
 
-    def refresh_labels(self) -> None:
+    def refresh_labels(self, selected_label_id: str | None = None) -> None:
         """Reload label rows while preserving current selected label."""
-        selected_label_id = self._get_selected_label_id()
+        selected_label_id = (
+            self._get_selected_label_id()
+            if selected_label_id is None
+            else selected_label_id
+        )
         self.run_worker(
             lambda: self._load_labels_worker(selected_label_id),
             thread=True,
@@ -200,6 +235,25 @@ class LabelsSidebar(Vertical):
                 return item.label_id
         return None
 
+    def _get_cursor_label_id(self) -> str | None:
+        """Return the label identifier under the current sidebar cursor."""
+        index = self.label_list.index
+        if index is None or not (0 <= index < len(self.label_list.children)):
+            return None
+        item = self.label_list.children[index]
+        if isinstance(item, LabelItem):
+            return item.label_id
+        return None
+
+    def _current_cursor_label_is_editable(self) -> bool:
+        """Return True when the highlighted label can be edited."""
+        if not self.is_attached:
+            return False
+        label_id = self._get_cursor_label_id() or self._get_selected_label_id()
+        if not label_id:
+            return False
+        return self.shmail_app.label_state.can_edit_label(label_id)
+
     def _load_labels_worker(self, selected_label_id: str | None) -> None:
         """Loads labels in a worker thread and mounts results on UI thread."""
         labels = self.shmail_app.label_state.refresh()
@@ -209,17 +263,23 @@ class LabelsSidebar(Vertical):
         """Apply one targeted label-state patch without rebuilding the full list."""
         label_id = str(label.get("id") or "")
         unread_count = int(label.get("unread_count") or 0)
-        display_name = str(label.get("name") or "")
+        full_name = str(label.get("name") or "")
+        display_name = full_name.split("/")[-1] if full_name else ""
+        background_color = str(label.get("background_color") or "") or None
         for child in self.label_list.children:
             if not isinstance(child, LabelItem):
                 continue
             if str(child.label_id) != label_id:
                 continue
             child.display_name = display_name or child.display_name
+            child.background_color = background_color
             child.set_count(unread_count)
             try:
                 name_widget = child.query_one(".label-name", Static)
                 name_widget.update(child._compose_label_text())
+                color_widget = child.query_one(".label-color-chip", Static)
+                color_widget.update("■" if background_color else " ")
+                color_widget.styles.color = background_color or "transparent"
             except Exception:
                 pass
             return
@@ -281,7 +341,11 @@ class LabelsSidebar(Vertical):
                 label_info = found_main[key]
                 self.label_list.append(
                     LabelItem(
-                        disp, label_info["id"], label_info["unread_count"], depth=1
+                        disp,
+                        label_info["id"],
+                        label_info["unread_count"],
+                        depth=1,
+                        background_color=label_info.get("background_color"),
                     )
                 )
                 if selected_label_id and label_info["id"] == selected_label_id:
@@ -296,7 +360,11 @@ class LabelsSidebar(Vertical):
                     label_info = found_cats[key]
                     self.label_list.append(
                         LabelItem(
-                            disp, label_info["id"], label_info["unread_count"], depth=1
+                            disp,
+                            label_info["id"],
+                            label_info["unread_count"],
+                            depth=1,
+                            background_color=label_info.get("background_color"),
                         )
                     )
                     if selected_label_id and label_info["id"] == selected_label_id:
@@ -309,7 +377,11 @@ class LabelsSidebar(Vertical):
                     label_info = found_more[key]
                     self.label_list.append(
                         LabelItem(
-                            disp, label_info["id"], label_info["unread_count"], depth=1
+                            disp,
+                            label_info["id"],
+                            label_info["unread_count"],
+                            depth=1,
+                            background_color=label_info.get("background_color"),
                         )
                     )
                     if selected_label_id and label_info["id"] == selected_label_id:
@@ -340,6 +412,7 @@ class LabelsSidebar(Vertical):
                         label["unread_count"],
                         depth=depth,
                         is_last_child=is_last,
+                        background_color=label.get("background_color"),
                     )
                 )
                 if selected_label_id and label["id"] == selected_label_id:
@@ -352,12 +425,46 @@ class LabelsSidebar(Vertical):
             if isinstance(item, LabelItem):
                 self._set_active_label(item.label_id)
                 self.post_message(self.LabelSelected(item.label_id))
+        self._refresh_footer_shortcuts()
 
     def on_list_view_selected(self, event: ListView.Selected):
         """Handles label selection and manages persistent visual state."""
         if isinstance(event.item, LabelItem):
             self._set_active_label(event.item.label_id)
             self.post_message(self.LabelSelected(event.item.label_id))
+            self._refresh_footer_shortcuts()
+
+    def on_list_view_highlighted(self, _event: ListView.Highlighted) -> None:
+        """Refresh footer shortcuts when the highlighted row changes."""
+        self._refresh_footer_shortcuts()
+
+    def action_new_label(self) -> None:
+        """Open the create-label modal from the labels pane."""
+        self.app.push_screen(
+            LabelEditScreen(LabelEditorSeed()), self._on_label_editor_closed
+        )
+
+    def action_edit_label(self) -> None:
+        """Open the edit-label modal for the selected custom label."""
+        selected_label_id = self._get_cursor_label_id() or self._get_selected_label_id()
+        if not selected_label_id:
+            return
+        label_state = self.shmail_app.label_state
+        if not label_state.can_edit_label(selected_label_id):
+            notify = getattr(self.app, "notify", None)
+            if callable(notify):
+                notify("System labels cannot be modified.", severity="warning")
+            return
+        self.app.push_screen(
+            LabelEditScreen(LabelEditorSeed(label_id=selected_label_id)),
+            self._on_label_editor_closed,
+        )
+
+    def _on_label_editor_closed(self, result: LabelMutationResult | None) -> None:
+        """Refresh the sidebar after one label-management mutation."""
+        if result is None:
+            return
+        self.refresh_labels(selected_label_id=result.focus_label_id)
 
     def on_descendant_focus(self, _event) -> None:
         """Sync cursor position to the active label when sidebar regains focus."""
@@ -379,4 +486,11 @@ class LabelsSidebar(Vertical):
         for index, child in enumerate(self.label_list.children):
             if isinstance(child, LabelItem) and child.label_id == self._active_label_id:
                 self.label_list.index = index
+                self._refresh_footer_shortcuts()
                 return
+
+    def _refresh_footer_shortcuts(self) -> None:
+        """Ask the current screen to rebuild footer shortcuts when available."""
+        refresh = getattr(self.screen, "refresh_footer_shortcuts", None)
+        if callable(refresh):
+            refresh()

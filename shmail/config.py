@@ -111,6 +111,16 @@ class Keybindings(BaseModel):
     resize_wide: str = Field(
         default="]", description="Expand the current resizable pane."
     )
+    label_new: str = Field(
+        default="n", description="Create a new custom label from the labels pane."
+    )
+    label_edit: str = Field(
+        default="e", description="Edit the selected custom label from the labels pane."
+    )
+    label_delete: str = Field(
+        default="ctrl+shift+d",
+        description="Delete the current custom label from the label editor.",
+    )
     thread_cycle_forward: str = Field(
         default="tab",
         description="Advance through thread card and link focus targets.",

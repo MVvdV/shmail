@@ -163,7 +163,14 @@ class SyncService:
         with self.repository.transaction() as conn:
             for label in labels:
                 self.repository.upsert_label(
-                    conn, label["id"], label["name"], label["type"]
+                    conn,
+                    label["id"],
+                    label["name"],
+                    label["type"],
+                    label_list_visibility=label.get("labelListVisibility"),
+                    message_list_visibility=label.get("messageListVisibility"),
+                    background_color=(label.get("color") or {}).get("backgroundColor"),
+                    text_color=(label.get("color") or {}).get("textColor"),
                 )
             self.repository.prune_labels(conn, valid_label_ids)
 

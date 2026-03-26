@@ -85,9 +85,15 @@ class DatabaseRepository:
                     CREATE TABLE IF NOT EXISTS labels (
                         id TEXT PRIMARY KEY,
                         name TEXT UNIQUE,
-                        type TEXT
+                        type TEXT,
+                        label_list_visibility TEXT,
+                        message_list_visibility TEXT,
+                        background_color TEXT,
+                        text_color TEXT
                     )
                 """)
+
+                self._ensure_label_schema(conn)
 
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS message_labels (
@@ -153,6 +159,21 @@ class DatabaseRepository:
         for column, definition in required_columns.items():
             if column not in existing_columns:
                 conn.execute(f"ALTER TABLE messages ADD COLUMN {column} {definition}")
+
+    def _ensure_label_schema(self, conn: sqlite3.Connection) -> None:
+        """Apply additive schema updates required by the current label model."""
+        rows = conn.execute("PRAGMA table_info(labels)").fetchall()
+        existing_columns = {row["name"] for row in rows}
+        required_columns = {
+            "label_list_visibility": "TEXT",
+            "message_list_visibility": "TEXT",
+            "background_color": "TEXT",
+            "text_color": "TEXT",
+        }
+
+        for column, definition in required_columns.items():
+            if column not in existing_columns:
+                conn.execute(f"ALTER TABLE labels ADD COLUMN {column} {definition}")
 
     def get_metadata(self, key: str) -> Optional[str]:
         """Return a metadata value for the provided key."""
@@ -450,9 +471,40 @@ class DatabaseRepository:
         """Return all labels from local storage."""
         with self.get_connection() as conn:
             cursor = conn.execute(
-                "SELECT id, name, type FROM labels ORDER BY type ASC, name ASC"
+                """
+                SELECT
+                    id,
+                    name,
+                    type,
+                    label_list_visibility,
+                    message_list_visibility,
+                    background_color,
+                    text_color
+                FROM labels
+                ORDER BY type ASC, name ASC
+                """
             )
             return [dict(row) for row in cursor.fetchall()]
+
+    def get_label(self, label_id: str) -> Optional[dict]:
+        """Return one label row by identifier."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    id,
+                    name,
+                    type,
+                    label_list_visibility,
+                    message_list_visibility,
+                    background_color,
+                    text_color
+                FROM labels
+                WHERE id = ?
+                """,
+                (label_id,),
+            ).fetchone()
+            return dict(row) if row else None
 
     def get_labels_with_counts(self) -> List[dict]:
         """Return labels with unread message counts."""
@@ -466,6 +518,10 @@ class DatabaseRepository:
                     l.id,
                     l.name,
                     l.type,
+                    l.label_list_visibility,
+                    l.message_list_visibility,
+                    l.background_color,
+                    l.text_color,
                     CASE
                         WHEN UPPER(l.id) = 'DRAFT' OR UPPER(l.name) LIKE 'DRAFT%' THEN (SELECT total_drafts FROM DraftTotal)
                         ELSE COUNT(m.id)
@@ -636,13 +692,45 @@ class DatabaseRepository:
         conn.execute("DELETE FROM message_drafts WHERE id = ?", (draft_id,))
 
     def upsert_label(
-        self, conn: sqlite3.Connection, label_id: str, label_name: str, label_type: str
+        self,
+        conn: sqlite3.Connection,
+        label_id: str,
+        label_name: str,
+        label_type: str,
+        *,
+        label_list_visibility: str | None = None,
+        message_list_visibility: str | None = None,
+        background_color: str | None = None,
+        text_color: str | None = None,
     ) -> None:
         """Insert or update a label entry."""
         conn.execute(
-            "INSERT OR REPLACE INTO labels (id, name, type) VALUES (?, ?, ?)",
-            (label_id, label_name, label_type),
+            """
+            INSERT OR REPLACE INTO labels (
+                id,
+                name,
+                type,
+                label_list_visibility,
+                message_list_visibility,
+                background_color,
+                text_color
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                label_id,
+                label_name,
+                label_type,
+                label_list_visibility,
+                message_list_visibility,
+                background_color,
+                text_color,
+            ),
         )
+
+    def delete_label(self, conn: sqlite3.Connection, label_id: str) -> None:
+        """Delete one label entry by identifier."""
+        conn.execute("DELETE FROM labels WHERE id = ?", (label_id,))
 
     def prune_labels(
         self, conn: sqlite3.Connection, valid_label_ids: List[str]

@@ -80,7 +80,9 @@ AppFooter {
 
 /* Shared shortcut rendering */
 #app-shortcuts,
-#thread-shortcuts {
+#thread-shortcuts,
+#label-editor-shortcuts,
+#message-draft-shortcuts {
     width: 1fr;
     height: 1;
     layout: horizontal;
@@ -111,6 +113,15 @@ AppFooter {
     padding-left: 1;
 }
 
+Toast {
+    background: $surface;
+    color: $foreground;
+}
+
+Toast .toast--title {
+    color: $foreground;
+}
+
 /* Labels sidebar */
 #labels-sidebar {
     width: 30;
@@ -138,6 +149,11 @@ LabelHeader {
 LabelItem {
     layout: horizontal;
     padding: 0 1;
+}
+
+.label-color-chip {
+    width: 2;
+    color: transparent;
 }
 
 .label-name {
@@ -332,11 +348,14 @@ ThreadMessagesScreen {
 
 /* Message draft modal */
 MessageDraftScreen,
-MessageDraftDiscardConfirmScreen {
+MessageDraftDiscardConfirmScreen,
+LabelEditScreen {
     align: center middle;
     background: $background 55%;
 }
 
+/* Label editor modal */
+#label-editor-modal-container,
 #message-draft-modal-container {
     width: 100%;
     max-width: 96;
@@ -346,11 +365,115 @@ MessageDraftDiscardConfirmScreen {
     border: round $panel 40%;
 }
 
+#label-editor-header-fields,
 #message-draft-header-fields {
     height: auto;
     padding: 1 2;
     border-bottom: solid $panel 40%;
 }
+
+#label-editor-title {
+    text-style: bold;
+    color: $primary;
+}
+
+#label-editor-subtitle {
+    margin: 1 0;
+    color: $foreground-muted;
+}
+
+#label-name,
+#label-parent,
+#label-preview-title,
+#label-preview {
+    margin-bottom: 1;
+}
+
+#label-parent > SelectCurrent {
+    border: round $panel 40%;
+    background: $background;
+}
+
+#label-color-mode {
+    margin-bottom: 1;
+    color: $foreground-muted;
+}
+
+#label-preview-title {
+    color: $foreground-muted;
+}
+
+#label-preview {
+    height: auto;
+    padding: 1;
+    border: round $panel 40%;
+    background: $background;
+}
+
+#label-color-scroll {
+    width: 1fr;
+    height: 1fr;
+    padding: 0 2 1 2;
+}
+
+#label-color-grid,
+#label-color-grid-body {
+    width: 1fr;
+    height: auto;
+}
+
+.label-color-row {
+    width: 1fr;
+    margin-top: 1;
+    height: auto;
+}
+
+.label-color-swatch {
+    content-align: center middle;
+    width: 3;
+    min-width: 3;
+    height: 3;
+    border: round transparent;
+    text-style: bold;
+}
+
+.label-color-row .label-color-swatch {
+    width: 1fr;
+}
+
+#label-color-grid-body > .label-color-swatch {
+    width: 1fr;
+    margin-top: 1;
+    background: transparent;
+    color: $foreground;
+}
+
+.label-color-swatch.-cursor {
+    border: round $panel;
+}
+
+.label-color-swatch.-selected-background {
+    border: round $primary;
+}
+
+.label-color-swatch.-selected-text {
+    border: round $accent;
+}
+
+.label-color-swatch.-selected-both {
+    border: double $secondary;
+}
+
+.label-color-swatch.-mode-target {
+    text-style: bold reverse;
+}
+
+#label-editor-footer {
+    width: 1fr;
+    height: 1;
+    background: $surface;
+}
+
 
 #message-draft-header-fields Input {
     margin-bottom: 1;
@@ -375,14 +498,6 @@ MessageDraftDiscardConfirmScreen {
     width: 1fr;
     height: 1;
     background: $surface;
-}
-
-#message-draft-shortcuts {
-    width: 1fr;
-    height: 1;
-    layout: horizontal;
-    align: right middle;
-    padding: 0 2;
 }
 
 /* Draft discard confirmation */

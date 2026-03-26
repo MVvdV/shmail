@@ -6,6 +6,7 @@ from typing import Iterable
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal
+from textual.widget import MountError
 from textual.widget import Widget
 from textual.widgets import Static
 
@@ -29,7 +30,11 @@ class ShortcutFooter(Horizontal):
 
     def update_shortcuts(self, shortcuts: Iterable[Shortcut]) -> None:
         """Render the provided shortcut labels in the footer."""
+        if not self.is_mounted:
+            return
         container = self.query_one(f"#{self.shortcuts_id}", Horizontal)
+        if not container.is_mounted:
+            return
         container.remove_children()
 
         widgets = []
@@ -40,7 +45,10 @@ class ShortcutFooter(Horizontal):
             widgets.append(Static(label, classes="shortcut-label", markup=False))
 
         if widgets:
-            container.mount(*widgets)
+            try:
+                container.mount(*widgets)
+            except MountError:
+                return
 
 
 def resolve_shortcut_owner(widget: Widget | None) -> Widget | None:
@@ -83,15 +91,39 @@ def movement_pair_label(up_binding: str, down_binding: str) -> str:
 
 def _normalize_key_label(key: str) -> str:
     """Normalize one Textual binding token into a compact display label."""
-    normalized = key.strip().upper()
-    replacements = {
-        "SHIFT+": "S+",
-        "CTRL+": "CTRL+",
-        "ESCAPE": "ESC",
-        "RETURN": "ENTER",
-        "PAGEDOWN": "PGDN",
-        "PAGEUP": "PGUP",
+    normalized = key.strip()
+    if not normalized:
+        return normalized
+
+    parts = normalized.split("+")
+    modifiers = [part for part in parts[:-1] if part]
+    key_part = parts[-1]
+
+    modifier_map = {
+        "shift": "Shift",
+        "ctrl": "Ctrl",
+        "alt": "Alt",
+        "meta": "Meta",
+        "super": "Super",
     }
-    for source, target in replacements.items():
-        normalized = normalized.replace(source, target)
-    return normalized
+    key_map = {
+        "escape": "Esc",
+        "return": "Enter",
+        "enter": "Enter",
+        "space": "Space",
+        "pagedown": "PgDn",
+        "pageup": "PgUp",
+        "home": "Home",
+        "end": "End",
+        "tab": "Tab",
+        "up": "Up",
+        "down": "Down",
+        "left": "Left",
+        "right": "Right",
+        "backspace": "Backspace",
+        "delete": "Delete",
+    }
+
+    display_modifiers = [modifier_map.get(part.lower(), part) for part in modifiers]
+    display_key = key_map.get(key_part.lower(), key_part)
+    return "+".join([*display_modifiers, display_key])

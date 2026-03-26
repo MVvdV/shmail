@@ -355,7 +355,7 @@ def test_thread_compose_on_draft_card_resumes_existing_draft(test_db):
             draft_item = next(
                 item for item in items if item.message_data.get("is_draft")
             )
-            assert draft_item.get_shortcuts()[0] == ("ENTER", "Resume")
+            assert draft_item.get_shortcuts()[0] == ("Enter", "Resume")
             draft_item.focus()
             await pilot.pause()
 

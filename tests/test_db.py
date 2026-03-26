@@ -18,13 +18,26 @@ def test_db(tmp_path):
 def test_upsert_label(test_db):
     """Tests saving and updating a label."""
     with test_db.transaction() as conn:
-        test_db.upsert_label(conn, "INBOX", "Inbox", "SYSTEM")
+        test_db.upsert_label(
+            conn,
+            "INBOX",
+            "Inbox",
+            "SYSTEM",
+            label_list_visibility="labelShow",
+            message_list_visibility="show",
+            background_color="#4986E7",
+            text_color="#FFFFFF",
+        )
 
     labels = test_db.get_labels()
     assert len(labels) == 1
     assert labels[0]["id"] == "INBOX"
     assert labels[0]["name"] == "Inbox"
     assert labels[0]["type"] == "SYSTEM"
+    assert labels[0]["label_list_visibility"] == "labelShow"
+    assert labels[0]["message_list_visibility"] == "show"
+    assert labels[0]["background_color"] == "#4986E7"
+    assert labels[0]["text_color"] == "#FFFFFF"
 
     with test_db.transaction() as conn:
         test_db.upsert_label(conn, "INBOX", "Incoming", "SYSTEM")
@@ -57,6 +70,19 @@ def test_metadata_storage(test_db):
         test_db.set_metadata(conn, "last_history_id", "67890")
     assert test_db.get_metadata("last_history_id") == "67890"
     assert test_db.get_metadata("non_existent") is None
+
+
+def test_label_schema_adds_metadata_columns(test_db):
+    """Ensure label visibility and color metadata columns exist."""
+    with test_db.get_connection() as conn:
+        columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(labels)").fetchall()
+        }
+
+    assert "label_list_visibility" in columns
+    assert "message_list_visibility" in columns
+    assert "background_color" in columns
+    assert "text_color" in columns
 
 
 def test_message_body_metadata_schema_and_persistence(test_db):

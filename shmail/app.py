@@ -1,4 +1,5 @@
 import logging
+import threading
 from logging.handlers import RotatingFileHandler
 from typing import Optional
 
@@ -86,6 +87,9 @@ class ShmailApp(App):
                 if progress is not None:
                     self.status_progress = progress
 
+            if self._thread_id == threading.get_ident():
+                _apply_update()
+                return
             self.call_from_thread(_apply_update)
 
         self.auth = AuthService(email, on_progress=update_progress)

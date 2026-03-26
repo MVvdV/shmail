@@ -6,11 +6,12 @@
 - [x] Phase 3: TUI Scaffolding (Tickets 3.1 - 3.9)
 - [x] Phase 4: Reading & Search (Tickets 4.1, 4.5, 4.7, 4.8, 4.9 complete)
 - [~] Phase 5: Composition & Offline (5.1 and 5.2 local-first slices implemented; outbound/provider sync pending)
+- [~] Phase 6: Polish & Distribution (6.1b and 6.2 implemented; broader hardening/distribution work pending)
 
-## Session State (Last Handover: Mar 25 2026)
-- **Last Action**: Completed the repository/service/query-service refactor by renaming `DatabaseRepository`, introducing `LabelStateService` plus query services, moving thread draft seed construction into `ThreadViewerService`, and removing watcher-driven draft redraws in favor of targeted label/thread-row patches.
-- **Next Step**: Build on the new state/query boundaries for remaining polish work: Pilot coverage for theme-sensitive surfaces, label editing on top of `LabelStateService`, and the deferred outbound/provider sync architecture.
-- **Blockers**: Outbound mutation architecture is not yet defined (queue/idempotency/reconcile) and must precede provider sync-back.
+## Session State (Last Handover: Mar 26 2026)
+- **Last Action**: Implemented `Ticket 6.2` Pilot coverage plus custom label management UX: Gmail-backed label create/edit/delete, nesting validation, runtime shortcut/footer updates, a full documented color grid picker, and cleanup/hardening across the label/theme test surface.
+- **Next Step**: Start the next polish slice by validating the new label-management UX against real-account behavior and then decide whether to implement Gmail visibility settings (`labelListVisibility` / `messageListVisibility`) or leave them deferred.
+- **Blockers**: No immediate implementation blocker for the next polish slice; outbound mutation architecture still blocks broader provider sync-back work, and Gmail visibility semantics remain intentionally deferred product scope.
 
 ## Granular Tickets (Migrated)
 
@@ -306,9 +307,12 @@
         - Theme directory lookup supports explicit custom roots plus compatible shared/user theme libraries.
         - Legacy provider-specific source names remain readable for backwards compatibility.
         - Regression coverage now includes current-theme, directory-theme, light, and high-contrast palette resolution.
-- [ ] **Ticket 6.2**: Setup `Textual Pilot` tests for UI.
+- [x] **Ticket 6.2**: Setup `Textual Pilot` tests for UI.
     - **Planning Notes (Mar 25 2026)**:
         - Add coverage for theme-sensitive surfaces (focus borders, modal backdrops, warning states) and user-configured shortcut labels rendered in footers and chooser dialogs.
+    - **Completed (Mar 26 2026)**:
+        - Added Pilot coverage for theme-sensitive surfaces, modal warning/backdrop styling, and config-driven shortcut labels rendered in mounted footers/dialogs.
+        - Added focused regression coverage around runtime shortcut rendering and theme token usage.
 - [ ] **Ticket 6.3**: Configure GitHub Actions for CI/CD and PyInstaller builds.
 - [ ] **Ticket 6.4**: UI Performance & Error Resilience Refinement.
     - **Planning Notes (Mar 25 2026)**:
@@ -357,3 +361,5 @@
 - [Mar 24 2026 (Session Close)]: Executed session-close workflow. Updated roadmap session state to the targeted compose-polish finish line and fixed the next execution step on unsaved-discard confirmation + real-inbox compose validation for Ticket 5.1 closure.
 - [Mar 25 2026]: Completed compose close/discard confirmation UX, added discard-restore coverage, corrected `reply all` recipient shaping so `Cc` remains separate from `To`, and validated compose interaction flows with targeted tests.
 - [Mar 25 2026]: Ran a production-grade architecture review against roadmap intent. Recorded new governance rules around UTC determinism, exception discipline, single refresh authority, theme/runtime truth, stale-surface cleanup, and Textual worker freshness guarantees.
+- [Mar 26 2026 (Session Close)]: Closed the session administratively with no new code changes, refreshed `Session State` to target `Ticket 6.2` Pilot coverage next, and re-verified roadmap continuity after the Mar 25 refactor/polish work.
+- [Mar 26 2026]: Implemented `Ticket 6.2` Pilot coverage and shipped the first custom label-management slice: Gmail/user-label create-edit-delete flows, nested parent validation, global/new-edit shortcuts, a documented Gmail color-grid picker with keyboard navigation, label metadata persistence, and follow-up cleanup/hardening of modal/footer/theme code paths.

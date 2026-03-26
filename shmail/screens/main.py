@@ -1,8 +1,10 @@
 from typing import TYPE_CHECKING, cast
 
 from shmail.config import settings
+from shmail.services.label_state import LabelMutationResult
+from .label_editor import LabelEditScreen, LabelEditorSeed
 from .message_draft import MessageDraftCloseUpdate, MessageDraftScreen, MessageDraftSeed
-from shmail.widgets.shortcuts import resolve_shortcut_owner
+from shmail.widgets.shortcuts import binding_choices_label, resolve_shortcut_owner
 from shmail.widgets import AppFooter, AppHeader, LabelsSidebar, ThreadList
 from .thread_messages import ThreadMessagesScreen
 from textual.app import ComposeResult
@@ -20,6 +22,7 @@ class MainScreen(Screen):
 
     BINDINGS = [
         Binding(settings.keybindings.compose, "compose_message", "Compose", show=False),
+        Binding(settings.keybindings.label_new, "new_label", "New Label", show=False),
         Binding(
             settings.keybindings.pane_next, "focus_next_pane", "Next Pane", show=False
         ),
@@ -60,12 +63,33 @@ class MainScreen(Screen):
 
     def watch_focused(self, focused) -> None:
         """Updates the footer shortcuts when the focused widget changes."""
+        self.refresh_footer_shortcuts(focused)
+
+    def refresh_footer_shortcuts(self, focused=None) -> None:
+        """Render footer shortcuts for the current main-screen context."""
+        if not self.is_mounted:
+            return
         footer = self.query_one(AppFooter)
-        owner = resolve_shortcut_owner(focused)
-        if owner is not None:
-            get_shortcuts = getattr(owner, "get_shortcuts", None)
-            if callable(get_shortcuts):
-                footer.update_shortcuts(cast(list[tuple[str, str]], get_shortcuts()))
+        if not footer.is_mounted:
+            return
+        owner = resolve_shortcut_owner(self.app.focused if focused is None else focused)
+        shortcuts = [
+            (binding_choices_label(settings.keybindings.compose, "c"), "Compose"),
+            (binding_choices_label(settings.keybindings.label_new, "n"), "New label"),
+        ]
+
+        if isinstance(owner, LabelsSidebar):
+            shortcuts.extend(owner.get_shortcuts())
+        elif isinstance(owner, ThreadList):
+            shortcuts.extend(owner.get_shortcuts())
+        else:
+            shortcuts.append(
+                (
+                    binding_choices_label(settings.keybindings.pane_next, "Tab"),
+                    "Threads",
+                )
+            )
+        footer.update_shortcuts(shortcuts)
 
     @staticmethod
     def _is_within(widget: Widget | None, ancestor: Widget) -> bool:
@@ -104,8 +128,22 @@ class MainScreen(Screen):
             self._on_message_draft_closed,
         )
 
+    def action_new_label(self) -> None:
+        """Open the label editor from anywhere in the main workspace."""
+        self.app.push_screen(
+            LabelEditScreen(LabelEditorSeed()), self._on_label_editor_closed
+        )
+
     def _on_message_draft_closed(self, update: MessageDraftCloseUpdate | None) -> None:
         """Delegate draft-close refresh handling to the app authority."""
         apply_update = getattr(self.shmail_app, "apply_message_draft_update", None)
         if callable(apply_update):
             apply_update(update)
+
+    def _on_label_editor_closed(self, result: LabelMutationResult | None) -> None:
+        """Refresh labels after creating or editing one from the main workspace."""
+        if result is None:
+            return
+        self.query_one(LabelsSidebar).refresh_labels(
+            selected_label_id=result.focus_label_id
+        )

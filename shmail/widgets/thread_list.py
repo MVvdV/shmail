@@ -27,7 +27,6 @@ class ThreadList(ListView):
         """Return the active shortcuts for the thread list."""
         return [
             (binding_choices_label(settings.keybindings.select, "ENTER"), "Open"),
-            (binding_choices_label(settings.keybindings.compose, "C"), "New"),
             (
                 movement_pair_label(settings.keybindings.up, settings.keybindings.down),
                 "Move",
