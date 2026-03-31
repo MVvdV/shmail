@@ -21,7 +21,7 @@ class AppHeader(Horizontal):
     SIGN_IN_ANOTHER = "__sign_in_another__"
 
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(id="app-header")
         self._suppress_account_select_event = False
         self._previous_focus: Widget | None = None
         self._skip_focus_restore = False

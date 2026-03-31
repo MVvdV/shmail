@@ -12,9 +12,35 @@ class ThreadViewerService:
     def __init__(self, repository: DatabaseRepository | None = None) -> None:
         self.repository = repository or db
 
-    def list_thread_messages(self, thread_id: str) -> list[dict]:
+    def list_thread_messages(
+        self, thread_id: str, view_label_id: str | None = None
+    ) -> list[dict]:
         """Return ordered message and draft cards for one thread."""
-        return self.repository.get_thread_messages(thread_id)
+        messages = self.repository.get_thread_messages(
+            thread_id, label_id=view_label_id
+        )
+        for message in messages:
+            message_id = str(message.get("id") or "")
+            if message_id.startswith("draft:"):
+                message.setdefault("labels", [])
+                message["mutation_pending_count"] = (
+                    1
+                    if str(message.get("draft_state") or "") == "queued_to_send"
+                    else 0
+                )
+                message["mutation_failed_count"] = 0
+                message["mutation_state"] = (
+                    "ready_for_sync"
+                    if str(message.get("draft_state") or "") == "queued_to_send"
+                    else ""
+                )
+                continue
+            message["labels"] = self.repository.list_message_labels(message_id)
+            status = self.repository.get_message_mutation_summary(message_id)
+            message["mutation_pending_count"] = int(status.get("pending_count") or 0)
+            message["mutation_failed_count"] = int(status.get("failed_count") or 0)
+            message["mutation_state"] = str(status.get("state") or "")
+        return messages
 
     def build_message_draft_seed(
         self, message_data: dict, action: str, current_account: str

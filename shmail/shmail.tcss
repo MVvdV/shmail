@@ -1,4 +1,11 @@
-/* Global */
+/*
+Global primitives
+shmail/shmail.tcss
+|-- *
+|-- Screen
+`-- Toast
+    `-- .toast--title
+*/
 * {
     scrollbar-size: 1 1;
     scrollbar-color: $surface;
@@ -14,19 +21,45 @@ Screen {
     color: $foreground;
 }
 
-/* Shared header/footer shell */
-AppHeader,
-AppFooter {
+Toast {
     background: $surface;
     color: $foreground;
 }
 
-AppHeader {
+Toast .toast--title {
+    color: $foreground;
+}
+
+/*
+Shared shell components
+shmail/widgets/header.py + shmail/widgets/shortcuts.py + shmail/widgets/footer.py + shmail/widgets/message_item.py + shmail/screens/label_editor.py + shmail/screens/message_draft.py
+|-- #app-header
+|   |-- #app-logo
+|   |-- #app-account-hint
+|   |   |-- .shortcut-key
+|   |   `-- .shortcut-label
+|   `-- #app-account-select
+|       `-- [framework internal] select display
+|           `-- [framework internal] select label
+|-- #app-footer / #thread-footer / #label-editor-footer / #message-draft-footer
+|   |-- #app-version / #thread-version / #message-draft-version
+|   `-- #app-shortcuts / #thread-shortcuts / #label-editor-shortcuts / #message-draft-shortcuts
+|       |-- .shortcut-key
+|       |-- .shortcut-label
+|       `-- .shortcut-separator
+*/
+#app-header,
+#app-footer {
+    background: $surface;
+    color: $foreground;
+}
+
+#app-header {
     dock: top;
     height: 1;
 }
 
-AppFooter {
+#app-footer {
     dock: bottom;
     height: 1;
 }
@@ -59,11 +92,13 @@ AppFooter {
     color: $foreground-muted;
 }
 
+/* Framework internal: Textual Select display within `#app-account-select`. */
 #app-account-select > SelectCurrent {
     border: none;
     background: transparent;
 }
 
+/* Framework internal: Textual Select label within `#app-account-select`. */
 #app-account-select > SelectCurrent > Static#label {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -113,16 +148,77 @@ AppFooter {
     padding-left: 1;
 }
 
-Toast {
-    background: $surface;
-    color: $foreground;
-}
+/*
+shmail/screens/login.py
+LoginScreen
+|-- #app-header
+|-- Center
+|   `-- #login-container
+|       |-- #welcome-text
+|       `-- #login-btn
+`-- #app-footer
 
-Toast .toast--title {
-    color: $foreground;
-}
+No dedicated TCSS selectors in this file; uses global and shared component styles.
+*/
 
-/* Labels sidebar */
+/*
+shmail/screens/loading.py
+LoadingScreen
+|-- #app-header
+|-- Center
+|   `-- #loading-container
+|       |-- #loading-status
+|       `-- #loading-bar
+`-- #app-footer
+
+No dedicated TCSS selectors in this file; uses global and shared component styles.
+*/
+
+/*
+shmail/screens/main.py
+MainScreen
+|-- #app-header
+|-- Horizontal
+|   |-- LabelsSidebar#labels-sidebar
+|   |   `-- #labels-sidebar-list
+|   |       |-- .labels-sidebar-section
+|   |       `-- .labels-sidebar-item
+|   |           |-- .label-color-chip
+|   |           |-- .label-name
+|   |           `-- .label-count
+|   `-- ThreadList#threads-list
+|       |-- list empty state row
+|       |   `-- #empty-state-msg
+|       `-- .thread-list-row
+|           `-- .thread-row-item
+|               |-- .thread-indicators
+|               |   |-- .thread-count
+|               |   |-- .unread-indicator
+|               |   `-- .mutation-indicator
+|               `-- .thread-row-wrapper
+|                   |-- .thread-row-header
+|                   |   |-- .thread-sender
+|                   |   |-- .thread-sender-email
+|                   |   `-- .thread-date
+|                   |-- .thread-subject
+|                   |-- .thread-snippet
+|                   `-- .thread-bottom-row
+|                       |-- .thread-snippet-tail
+|                       `-- .thread-label-chips
+`-- #app-footer
+*/
+
+/*
+shmail/widgets/labels_sidebar.py
+LabelsSidebar
+`-- #labels-sidebar
+    `-- #labels-sidebar-list
+        |-- .labels-sidebar-section
+        `-- .labels-sidebar-item
+            |-- .label-color-chip
+            |-- .label-name
+            `-- .label-count
+*/
 #labels-sidebar {
     width: 30;
     height: 100%;
@@ -138,7 +234,7 @@ Toast .toast--title {
     scrollbar-color: $primary;
 }
 
-LabelHeader {
+.labels-sidebar-section {
     height: 1;
     border-top: solid $panel 40%;
     border-title-align: left;
@@ -146,7 +242,7 @@ LabelHeader {
     margin-top: 1;
 }
 
-LabelItem {
+.labels-sidebar-item {
     layout: horizontal;
     padding: 0 1;
 }
@@ -169,32 +265,54 @@ LabelItem {
     color: $foreground-muted;
 }
 
-LabelItem.unread .label-name,
-LabelItem.unread .label-count {
+.labels-sidebar-item.unread .label-name,
+.labels-sidebar-item.unread .label-count {
     text-style: bold;
 }
 
-LabelItem.selected .label-name,
-LabelItem.selected .label-count {
+.labels-sidebar-item.selected .label-name,
+.labels-sidebar-item.selected .label-count {
     color: $primary;
     text-style: bold;
 }
 
-#labels-sidebar ListView > ListItem.-highlight {
+#labels-sidebar-list > .labels-sidebar-item.-highlight {
     background: transparent;
 }
 
-#labels-sidebar ListView:focus > ListItem.-highlight {
+#labels-sidebar-list:focus > .labels-sidebar-item.-highlight {
     background: $panel 18%;
 }
 
-#labels-sidebar ListView:focus > ListItem.-highlight .label-name,
-#labels-sidebar ListView:focus > ListItem.-highlight .label-count {
+#labels-sidebar-list:focus > .labels-sidebar-item.-highlight .label-name,
+#labels-sidebar-list:focus > .labels-sidebar-item.-highlight .label-count {
     color: $primary;
     text-style: bold;
 }
 
-/* Thread list */
+/*
+shmail/widgets/thread_list.py
+ThreadList
+`-- ThreadList#threads-list
+    |-- list empty state row
+    |   `-- #empty-state-msg
+    `-- .thread-list-row
+        `-- .thread-row-item
+            |-- .thread-indicators
+            |   |-- .thread-count
+            |   |-- .unread-indicator
+            |   `-- .mutation-indicator
+            `-- .thread-row-wrapper
+                |-- .thread-row-header
+                |   |-- .thread-sender
+                |   |-- .thread-sender-email
+                |   `-- .thread-date
+                |-- .thread-subject
+                |-- .thread-snippet
+                `-- .thread-bottom-row
+                    |-- .thread-snippet-tail
+                    `-- .thread-label-chips
+*/
 #threads-list {
     width: 1fr;
     height: 100%;
@@ -208,7 +326,7 @@ LabelItem.selected .label-count {
 
 .thread-row-item {
     width: 100%;
-    height: 4;
+    height: 5;
     border-bottom: solid $surface;
 }
 
@@ -233,7 +351,7 @@ LabelItem.selected .label-count {
     color: $primary;
 }
 
-.draft-indicator {
+.mutation-indicator {
     height: 1;
     width: 100%;
     content-align: center middle;
@@ -292,18 +410,57 @@ LabelItem.selected .label-count {
     text-wrap: nowrap;
 }
 
-#threads-list > ListItem.-highlight {
+.thread-bottom-row {
+    width: 1fr;
+    height: 1;
+}
+
+.thread-snippet-tail {
+    width: 1fr;
+    height: 1;
+    color: $foreground-disabled;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    text-wrap: nowrap;
+}
+
+.thread-label-chips {
+    width: auto;
+    max-width: 44;
+    content-align: right middle;
+    color: $foreground-muted;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    text-wrap: nowrap;
+}
+
+#threads-list > .thread-list-row.-highlight {
     background: transparent;
 }
 
-#threads-list:focus > ListItem.-highlight {
+#threads-list:focus > .thread-list-row.-highlight {
     background: $panel 18%;
     color: $primary;
     text-style: bold;
 }
 
-/* Thread viewer modal */
-ThreadMessagesScreen {
+/*
+shmail/screens/thread_messages.py
+#thread-viewer-screen
+`-- #thread-modal-container
+    |-- ScrollableContainer#thread-stack
+    |   `-- .thread-message-card
+    |       |-- .message-header-container
+    |       |   |-- .message-subject
+    |       |   |-- .message-from
+    |       |   |-- .message-to
+    |       |   `-- .message-date
+    |       |-- .message-interaction-bar
+    |       `-- Markdown.message-markdown
+    `-- ThreadFooter#thread-footer
+        `-- #thread-shortcuts
+*/
+#thread-viewer-screen {
     align: center middle;
     background: $background 55%;
 }
@@ -346,15 +503,32 @@ ThreadMessagesScreen {
     color: $foreground-muted;
 }
 
-/* Message draft modal */
-MessageDraftScreen,
-MessageDraftDiscardConfirmScreen,
-LabelEditScreen {
+/*
+Shared modal overlays
+shmail/screens/message_draft.py + shmail/screens/label_editor.py + shmail/screens/mutation_inspector.py
+|-- #message-draft-modal-screen
+|-- #message-draft-discard-screen
+|-- #label-editor-screen
+|-- #label-selection-screen
+|-- #move-selection-screen
+`-- #mutation-inspector-screen
+*/
+#message-draft-modal-screen,
+#message-draft-discard-screen,
+#label-editor-screen,
+#label-selection-screen,
+#move-selection-screen,
+#mutation-inspector-screen {
     align: center middle;
     background: $background 55%;
 }
 
-/* Label editor modal */
+/*
+Shared full-screen modal panels
+shmail/shmail.tcss
+|-- #label-editor-modal-container
+`-- #message-draft-modal-container
+*/
 #label-editor-modal-container,
 #message-draft-modal-container {
     width: 100%;
@@ -365,107 +539,125 @@ LabelEditScreen {
     border: round $panel 40%;
 }
 
-#label-editor-header-fields,
-#message-draft-header-fields {
-    height: auto;
+/*
+shmail/screens/label_editor.py
+#label-editor-screen
+`-- #label-editor-modal-container
+    |-- Horizontal
+    |   |-- #label-editor-form
+    |   |   |-- #label-editor-heading
+    |   |   |-- #label-editor-description
+    |   |   |-- #label-editor-name
+    |   |   |-- #label-editor-parent
+    |   |   |   `-- [framework internal] select display
+    |   |   |-- #label-editor-palette-status
+    |   |   |-- #label-editor-preview-label
+    |   |   `-- #label-editor-preview-chip
+    |   `-- ScrollableContainer#label-editor-palette-pane
+    |       `-- #label-editor-palette-grid
+    |           `-- #label-editor-palette-swatches
+    |               |-- .label-editor-palette-swatch
+    |               `-- .label-editor-palette-row
+    |                   `-- .label-editor-palette-swatch
+    `-- LabelEditorFooter#label-editor-footer
+        `-- #label-editor-shortcuts
+*/
+#label-editor-form {
+    width: 1fr;
+    min-width: 24;
+    height: 1fr;
     padding: 1 2;
-    border-bottom: solid $panel 40%;
+    border-right: solid $panel 40%;
 }
 
-#label-editor-title {
+#label-editor-heading {
     text-style: bold;
     color: $primary;
 }
 
-#label-editor-subtitle {
+#label-editor-description {
     margin: 1 0;
     color: $foreground-muted;
 }
 
-#label-name,
-#label-parent,
-#label-preview-title,
-#label-preview {
+#label-editor-name,
+#label-editor-parent,
+#label-editor-preview-label,
+#label-editor-preview-chip {
     margin-bottom: 1;
 }
 
-#label-parent > SelectCurrent {
+/* Framework internal: Textual Select display within `#label-editor-parent`. */
+#label-editor-parent > SelectCurrent {
     border: round $panel 40%;
     background: $background;
 }
 
-#label-color-mode {
+#label-editor-palette-status,
+#label-editor-preview-label {
+    color: $foreground-muted;
+}
+
+#label-editor-palette-status {
     margin-bottom: 1;
-    color: $foreground-muted;
 }
 
-#label-preview-title {
-    color: $foreground-muted;
-}
-
-#label-preview {
+#label-editor-preview-chip {
     height: auto;
     padding: 1;
     border: round $panel 40%;
     background: $background;
 }
 
-#label-color-scroll {
-    width: 1fr;
+#label-editor-palette-pane {
+    width: 38;
+    min-width: 38;
+    max-width: 38;
     height: 1fr;
-    padding: 0 2 1 2;
+    padding: 1 2;
 }
 
-#label-color-grid,
-#label-color-grid-body {
+#label-editor-palette-swatches {
     width: 1fr;
     height: auto;
 }
 
-.label-color-row {
-    width: 1fr;
-    margin-top: 1;
-    height: auto;
+.label-editor-palette-row {
+    width: auto;
 }
 
-.label-color-swatch {
+.label-editor-palette-swatch {
     content-align: center middle;
     width: 3;
     min-width: 3;
     height: 3;
-    border: round transparent;
     text-style: bold;
 }
 
-.label-color-row .label-color-swatch {
-    width: 1fr;
-}
-
-#label-color-grid-body > .label-color-swatch {
-    width: 1fr;
-    margin-top: 1;
+#label-editor-palette-swatches > .label-editor-palette-swatch {
+    width: 12;
     background: transparent;
     color: $foreground;
 }
 
-.label-color-swatch.-cursor {
-    border: round $panel;
+.label-editor-palette-swatch.-cursor {
+    border: solid $panel-darken-1;
 }
 
-.label-color-swatch.-selected-background {
-    border: round $primary;
+.label-editor-palette-swatch.-selected-background {
+    border: solid $primary-darken-1;
 }
 
-.label-color-swatch.-selected-text {
-    border: round $accent;
+.label-editor-palette-swatch.-selected-text {
+    border: solid $accent-darken-1;
 }
 
-.label-color-swatch.-selected-both {
-    border: double $secondary;
+.label-editor-palette-swatch.-selected-both {
+    border: solid $secondary-darken-1;
 }
 
-.label-color-swatch.-mode-target {
-    text-style: bold reverse;
+.label-editor-palette-swatch.-mode-target {
+    text-style: bold;
 }
 
 #label-editor-footer {
@@ -474,6 +666,162 @@ LabelEditScreen {
     background: $surface;
 }
 
+/*
+shmail/screens/message_actions.py
+|-- #label-selection-screen / #move-selection-screen
+|   `-- #message-action-modal
+|       |-- #message-action-title
+|       |-- #message-action-body
+|       |-- #message-label-selection-list / #move-destination-list
+|       `-- #message-action-shortcuts
+*/
+#message-action-modal {
+    width: 72;
+    max-width: 72;
+    height: auto;
+    max-height: 32;
+    padding: 1 2;
+    background: $surface;
+    border: round $panel 40%;
+}
+
+#message-action-title {
+    text-style: bold;
+    color: $primary;
+}
+
+#message-action-body {
+    margin: 1 0;
+    color: $foreground-muted;
+}
+
+#message-label-selection-list,
+#move-destination-list {
+    height: 1fr;
+    border: solid $panel 40%;
+    margin-bottom: 1;
+}
+
+#message-label-selection-list > .selection-list--button-highlighted,
+#message-label-selection-list > .selection-list--button-selected,
+#message-label-selection-list > .selection-list--button-selected-highlighted,
+#message-label-selection-list > .option-list--option-highlighted {
+    background: transparent;
+}
+
+#message-action-shortcuts {
+    height: auto;
+}
+
+/*
+shmail/screens/mutation_inspector.py
+#mutation-inspector-screen
+`-- #mutation-inspector-modal
+    |-- #mutation-inspector-title
+    |-- #mutation-inspector-body
+    |-- #mutation-inspector-content
+    |   |-- #mutation-inspector-list
+    |   |   `-- .mutation-inspector-item
+    |   |       `-- .mutation-inspector-row
+    |   `-- #mutation-inspector-detail
+    |       |-- #mutation-inspector-detail-title
+    |       |-- #mutation-inspector-detail-meta
+    |       `-- #mutation-inspector-detail-payload
+    `-- #mutation-inspector-shortcuts
+*/
+#mutation-inspector-modal {
+    width: 108;
+    max-width: 108;
+    height: auto;
+    max-height: 36;
+    padding: 1 2;
+    background: $surface;
+    border: round $panel 40%;
+}
+
+#mutation-inspector-title {
+    text-style: bold;
+    color: $primary;
+}
+
+#mutation-inspector-body {
+    margin: 1 0;
+    color: $foreground-muted;
+}
+
+#mutation-inspector-content {
+    height: 1fr;
+}
+
+#mutation-inspector-list {
+    width: 46;
+    min-width: 46;
+    border: solid $panel 40%;
+    margin-right: 1;
+}
+
+#mutation-inspector-detail {
+    width: 1fr;
+    border: solid $panel 40%;
+    padding: 1;
+}
+
+#mutation-inspector-detail-title {
+    text-style: bold;
+    color: $secondary;
+}
+
+#mutation-inspector-detail-meta {
+    margin-top: 1;
+    color: $foreground-muted;
+}
+
+#mutation-inspector-detail-payload {
+    margin-top: 1;
+    height: 1fr;
+}
+
+#mutation-inspector-shortcuts {
+    margin-top: 1;
+    height: auto;
+}
+
+.mutation-inspector-row {
+    width: 1fr;
+}
+
+#mutation-inspector-list > .-highlight .mutation-inspector-row {
+    color: $primary;
+    text-style: bold;
+}
+
+#mutation-inspector-list > .-highlight.-failed .mutation-inspector-row,
+#mutation-inspector-list > .-highlight.-blocked .mutation-inspector-row {
+    color: $warning;
+}
+
+/*
+shmail/screens/message_draft.py
+#message-draft-modal-screen
+`-- #message-draft-modal-container
+    |-- #message-draft-header-fields
+    |   |-- #draft-to
+    |   |-- #draft-cc
+    |   |-- #draft-bcc
+    |   `-- #draft-subject
+    |-- TabbedContent#message-draft-body-tabs
+    |   |-- TabPane#draft-edit
+    |   |   `-- TextArea#message-draft-editor
+    |   `-- TabPane#draft-preview
+    |       `-- Markdown#message-draft-preview
+    `-- MessageDraftFooter#message-draft-footer
+        `-- #message-draft-shortcuts
+*/
+#message-draft-header-fields {
+    height: auto;
+    padding: 1 2;
+    border-bottom: solid $panel 40%;
+}
 
 #message-draft-header-fields Input {
     margin-bottom: 1;
@@ -500,7 +848,20 @@ LabelEditScreen {
     background: $surface;
 }
 
-/* Draft discard confirmation */
+/*
+shmail/screens/message_draft.py
+#message-draft-discard-screen
+`-- #message-draft-discard-modal
+    |-- #message-draft-discard-title
+    |-- #message-draft-discard-body
+    |-- #message-draft-discard-list
+    |   `-- .message-draft-discard-action
+    |       `-- Static
+    `-- #message-draft-discard-shortcuts
+        |-- .shortcut-key
+        |-- .shortcut-label
+        `-- .shortcut-separator
+*/
 #message-draft-discard-modal {
     width: 64;
     height: auto;
@@ -531,7 +892,7 @@ LabelEditScreen {
     background: transparent;
 }
 
-#message-draft-discard-list:focus > ListItem.-highlight {
+#message-draft-discard-list:focus > .message-draft-discard-action.-highlight {
     background: $panel 18%;
     color: $warning;
     text-style: bold;
@@ -546,8 +907,18 @@ LabelEditScreen {
     margin-top: 1;
 }
 
-/* Message card */
-MessageItem {
+/*
+shmail/widgets/message_item.py
+.thread-message-card
+|-- .message-header-container
+|   |-- .message-subject
+|   |-- .message-from
+|   |-- .message-to
+|   `-- .message-date
+|-- .message-interaction-bar
+`-- Markdown.message-markdown
+*/
+.thread-message-card {
     width: 100%;
     height: auto;
     border: solid $panel 40%;
@@ -555,15 +926,15 @@ MessageItem {
     margin-bottom: 1;
 }
 
-MessageItem:focus {
+.thread-message-card:focus {
     border: solid $primary;
 }
 
-MessageItem.-draft {
+.thread-message-card.-draft {
     border: solid $warning 50%;
 }
 
-MessageItem.-draft:focus {
+.thread-message-card.-draft:focus {
     border: solid $warning;
 }
 
@@ -577,7 +948,7 @@ MessageItem.-draft:focus {
     text-style: bold;
 }
 
-MessageItem.-draft .message-subject {
+.thread-message-card.-draft .message-subject {
     color: $warning;
 }
 
@@ -600,8 +971,19 @@ MessageItem.-draft .message-subject {
     display: none;
 }
 
-MessageItem.-draft .message-interaction-bar {
+.thread-message-card.-draft .message-interaction-bar {
     color: $warning;
+}
+
+.message-label-chips {
+    height: auto;
+    margin-top: 1;
+    color: $foreground-muted;
+}
+
+.message-status-copy {
+    margin-top: 1;
+    color: $foreground-disabled;
 }
 
 .message-markdown {
@@ -612,15 +994,21 @@ MessageItem.-draft .message-interaction-bar {
     display: none;
 }
 
-MessageItem.-expanded .message-interaction-bar {
+.thread-message-card.-expanded .message-interaction-bar {
     display: block;
 }
 
-MessageItem.-expanded .message-markdown {
+.thread-message-card.-expanded .message-markdown {
     display: block;
 }
 
-/* Markdown theme */
+/*
+Markdown renderer
+shmail/widgets/message_item.py + shmail/screens/message_draft.py
+|-- Markdown
+|   `-- Link
+`-- MarkdownBlockQuote
+*/
 Markdown {
     background: transparent;
     color: $foreground;

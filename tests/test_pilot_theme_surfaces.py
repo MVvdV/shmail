@@ -12,7 +12,7 @@ from textual.widget import Widget
 from textual.widgets import Input, Static
 
 from shmail.config import Theme, settings
-from shmail.models import Label, Message
+from shmail.models import Label, Message, MessageDraft
 from shmail.screens import MainScreen
 from shmail.screens.message_draft import (
     MessageDraftDiscardConfirmScreen,
@@ -26,7 +26,7 @@ from shmail.services.label_state import LabelStateService
 from shmail.services.theme import build_textual_theme
 from shmail.services.thread_query import ThreadQueryService
 from shmail.services.thread_viewer import ThreadViewerService
-from shmail.widgets import AppFooter, MessageItem, ThreadFooter, ThreadList
+from shmail.widgets import AppFooter, MessageItem, ThreadFooter, ThreadList, ThreadRow
 
 CSS_PATH = str(Path(__file__).resolve().parents[1] / "shmail" / "shmail.tcss")
 
@@ -228,10 +228,10 @@ def test_message_cards_use_primary_and_warning_theme_colors() -> None:
     asyncio.run(run_test())
 
 
-def test_thread_warning_indicator_uses_runtime_warning_color(
+def test_thread_draft_chip_renders_after_runtime_update(
     test_db: DatabaseRepository,
 ) -> None:
-    """Ensure draft indicators in thread rows resolve the warning token."""
+    """Ensure Drafts chips appear in thread rows after local draft updates."""
     message = Message(
         id="draft_marker_message",
         thread_id="draft_marker_thread",
@@ -244,6 +244,22 @@ def test_thread_warning_indicator_uses_runtime_warning_color(
 
     with test_db.transaction() as conn:
         test_db.upsert_message(conn, message)
+        test_db.upsert_message_draft(
+            conn,
+            MessageDraft(
+                id="draft_marker_local",
+                mode="reply",
+                to_addresses="alice@example.com",
+                cc_addresses="",
+                bcc_addresses="",
+                subject="Re: Thread with draft",
+                body="Draft body",
+                source_message_id="draft_marker_message",
+                source_thread_id="draft_marker_thread",
+                created_at=datetime(2026, 3, 25, 9, 35, 0),
+                updated_at=datetime(2026, 3, 25, 9, 35, 0),
+            ),
+        )
 
     async def run_test() -> None:
         app = ThemedMainApp(test_db, Theme(name="white", source="preset"))
@@ -252,11 +268,10 @@ def test_thread_warning_indicator_uses_runtime_warning_color(
 
             thread_list = app.screen.query_one("#threads-list", ThreadList)
             thread_list.load_threads("INBOX")
-            thread_list.update_thread_draft_marker("draft_marker_thread", 1)
             await pilot.pause()
 
-            indicator = thread_list.query_one(".draft-indicator", Static)
-            assert _color_hex(indicator, "color") == "#4a4a4a"
+            row = cast(ThreadRow, thread_list.query_one(ThreadRow))
+            assert "Drafts" in row._render_label_chips()
 
     asyncio.run(run_test())
 

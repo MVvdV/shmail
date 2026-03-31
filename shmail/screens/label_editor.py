@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from colorsys import rgb_to_hsv
 from dataclasses import dataclass
 
 from googleapiclient.errors import HttpError
@@ -23,131 +22,75 @@ from shmail.widgets.shortcuts import ShortcutFooter, binding_choices_label
 NO_PARENT = "__label_root__"
 BACKGROUND_MODE = "background"
 TEXT_MODE = "text"
-SWATCHES_PER_ROW = 18
+SWATCHES_PER_ROW = 8
 
 _RAW_GMAIL_ALLOWED_COLOR_VALUES: list[str] = [
     "#000000",
     "#434343",
     "#666666",
     "#999999",
-    "#CCCCCC",
-    "#EFEFEF",
-    "#F3F3F3",
-    "#FFFFFF",
-    "#FB4C2F",
-    "#FFAD47",
-    "#FAD165",
-    "#16A766",
-    "#43D692",
-    "#4A86E8",
-    "#A479E2",
-    "#F691B3",
-    "#F6C5BE",
-    "#FFE6C7",
-    "#FEF1D1",
-    "#B9E4D0",
-    "#C6F3DE",
-    "#C9DAF8",
-    "#E4D7F5",
-    "#FCDEE8",
-    "#EFA093",
-    "#FFD6A2",
-    "#FCE8B3",
-    "#89D3B2",
-    "#A0EAC9",
-    "#A4C2F4",
-    "#D0BCF1",
-    "#FBC8D9",
-    "#E66550",
-    "#FFBC6B",
-    "#FCDA83",
-    "#44B984",
-    "#68DFA9",
-    "#6D9EEB",
-    "#B694E8",
-    "#F7A7C0",
-    "#CC3A21",
-    "#EAA041",
-    "#F2C960",
-    "#149E60",
-    "#3DC789",
-    "#3C78D8",
-    "#8E63CE",
-    "#E07798",
-    "#AC2B16",
-    "#CF8933",
-    "#D5AE49",
-    "#0B804B",
-    "#2A9C68",
-    "#285BAC",
-    "#653E9B",
-    "#B65775",
+    "#cccccc",
+    "#efefef",
+    "#f3f3f3",
+    "#ffffff",
+    "#f6c5be",
+    "#ffe6c7",
+    "#fef1d1",
+    "#b9e4d0",
+    "#c6f3de",
+    "#c9daf8",
+    "#e4d7f5",
+    "#fcdee8",
+    "#efa093",
+    "#ffd6a2",
+    "#fce8b3",
+    "#89d3b2",
+    "#a0eac9",
+    "#a4c2f4",
+    "#d0bcf1",
+    "#fbc8d9",
+    "#e66550",
+    "#ffbc6b",
+    "#fcda83",
+    "#44b984",
+    "#68dfa9",
+    "#6d9eeb",
+    "#b694e8",
+    "#f7a7c0",
+    "#cc3a21",
+    "#eaa041",
+    "#f2c960",
+    "#149e60",
+    "#3dc789",
+    "#3c78d8",
+    "#8e63ce",
+    "#e07798",
+    "#ac2b16",
+    "#cf8933",
+    "#d5ae49",
+    "#0b804b",
+    "#2a9c68",
+    "#285bac",
+    "#653e9b",
+    "#b65775",
     "#822111",
-    "#A46A21",
-    "#AA8831",
+    "#a46a21",
+    "#aa8831",
     "#076239",
-    "#1A764D",
-    "#1C4587",
-    "#41236D",
-    "#83334C",
-    "#464646",
-    "#E7E7E7",
-    "#0D3472",
-    "#B6CFF5",
-    "#0D3B44",
-    "#98D7E4",
-    "#3D188E",
-    "#E3D7FF",
-    "#711A36",
-    "#FBD3E0",
-    "#8A1C0A",
-    "#F2B2A8",
-    "#7A2E0B",
-    "#FFC8AF",
-    "#7A4706",
-    "#FFDEB5",
-    "#594C05",
-    "#FBE983",
-    "#684E07",
-    "#FDEDC1",
-    "#0B4F30",
-    "#B3EFD3",
-    "#04502E",
-    "#A2DCC1",
-    "#C2C2C2",
-    "#4986E7",
-    "#2DA2BB",
-    "#B99AFF",
-    "#994A64",
-    "#F691B2",
-    "#FF7537",
-    "#FFAD46",
-    "#662E37",
-    "#EBDBDE",
-    "#CCA6AC",
-    "#094228",
-    "#42D692",
-    "#16A765",
+    "#1a764d",
+    "#1c4587",
+    "#41236d",
+    "#83334c",
+    "#fb4c2f",
+    "#ffad47",
+    "#fad165",
+    "#16a766",
+    "#43d692",
+    "#4a86e8",
+    "#a479e2",
+    "#f691b3",
 ]
-
-
-def _sort_color_spectrum(colors: list[str]) -> list[str]:
-    """Return the documented Gmail colors ordered roughly by spectrum."""
-
-    def sort_key(hex_color: str) -> tuple[int, float, float, float]:
-        red = int(hex_color[1:3], 16) / 255
-        green = int(hex_color[3:5], 16) / 255
-        blue = int(hex_color[5:7], 16) / 255
-        hue, saturation, value = rgb_to_hsv(red, green, blue)
-        is_neutral = 0 if saturation < 0.08 else 1
-        return (is_neutral, hue, value, saturation)
-
-    return sorted(colors, key=sort_key)
-
-
-GMAIL_ALLOWED_COLOR_VALUES: list[str] = _sort_color_spectrum(
-    _RAW_GMAIL_ALLOWED_COLOR_VALUES
-)
+GMAIL_ALLOWED_COLOR_VALUES: list[str] = _RAW_GMAIL_ALLOWED_COLOR_VALUES
 
 
 @dataclass
@@ -169,7 +112,7 @@ class LabelColorSwatch(Static):
     """One visual color swatch within the label color picker."""
 
     def __init__(self, swatch_index: int, label: str, color: str | None) -> None:
-        super().__init__(label, markup=False, classes="label-color-swatch")
+        super().__init__(label, markup=False, classes="label-editor-palette-swatch")
         self.swatch_index = swatch_index
         self.color_value = color
 
@@ -201,7 +144,7 @@ class LabelColorGrid(Widget):
             self.mode = mode
 
     def __init__(self) -> None:
-        super().__init__(id="label-color-grid")
+        super().__init__(id="label-editor-palette-grid")
         self.cursor_index = 0
         self.mode = BACKGROUND_MODE
         self.selected_background_color: str | None = None
@@ -209,12 +152,12 @@ class LabelColorGrid(Widget):
 
     def compose(self) -> ComposeResult:
         """Render the no-color row and responsive multi-column swatch rows."""
-        with Vertical(id="label-color-grid-body"):
+        with Vertical(id="label-editor-palette-swatches"):
             yield LabelColorSwatch(0, "No colour", None)
             for row_start in range(
                 0, len(GMAIL_ALLOWED_COLOR_VALUES), SWATCHES_PER_ROW
             ):
-                with Horizontal(classes="label-color-row"):
+                with Horizontal(classes="label-editor-palette-row"):
                     for offset, color in enumerate(
                         GMAIL_ALLOWED_COLOR_VALUES[
                             row_start : row_start + SWATCHES_PER_ROW
@@ -236,8 +179,8 @@ class LabelColorGrid(Widget):
         self, background_color: str | None, text_color: str | None
     ) -> None:
         """Set both selected colors from external state."""
-        self.selected_background_color = background_color
-        self.selected_text_color = text_color
+        self.selected_background_color = self._normalize_color_value(background_color)
+        self.selected_text_color = self._normalize_color_value(text_color)
         self.cursor_index = self._cursor_for_colors()
         self.refresh_swatch_styles()
 
@@ -381,6 +324,12 @@ class LabelColorGrid(Widget):
         color_index = cursor_index - 1
         return color_index // SWATCHES_PER_ROW, color_index % SWATCHES_PER_ROW
 
+    @staticmethod
+    def _normalize_color_value(color: str | None) -> str | None:
+        """Return one trimmed lowercase hex color or None."""
+        value = str(color or "").strip()
+        return value.lower() or None
+
 
 class LabelEditScreen(ModalScreen[LabelMutationResult | None]):
     """Modal screen for creating, editing, and deleting custom labels."""
@@ -403,7 +352,7 @@ class LabelEditScreen(ModalScreen[LabelMutationResult | None]):
     ]
 
     def __init__(self, seed: LabelEditorSeed | None = None) -> None:
-        super().__init__()
+        super().__init__(id="label-editor-screen")
         self.seed = seed or LabelEditorSeed()
         self._initial_parent_id: str | None = None
         self._selection_mode = BACKGROUND_MODE
@@ -411,25 +360,26 @@ class LabelEditScreen(ModalScreen[LabelMutationResult | None]):
     def compose(self) -> ComposeResult:
         """Render the label-management form."""
         with Vertical(id="label-editor-modal-container"):
-            with Vertical(id="label-editor-header-fields"):
-                yield Static(id="label-editor-title")
-                yield Static(
-                    "Custom labels can be nested and colorized. System labels stay read-only.",
-                    id="label-editor-subtitle",
-                    markup=False,
-                )
-                yield Input(placeholder="Label name", id="label-name")
-                yield Select[str](
-                    [("No parent", NO_PARENT)],
-                    value=NO_PARENT,
-                    allow_blank=False,
-                    id="label-parent",
-                )
-                yield Static(id="label-color-mode")
-                yield Static("Preview", id="label-preview-title")
-                yield Static(id="label-preview")
-            with ScrollableContainer(id="label-color-scroll"):
-                yield LabelColorGrid()
+            with Horizontal():
+                with Vertical(id="label-editor-form"):
+                    yield Static(id="label-editor-heading")
+                    yield Static(
+                        "Custom labels can be nested and colorized. System labels stay read-only.",
+                        id="label-editor-description",
+                        markup=False,
+                    )
+                    yield Input(placeholder="Label name", id="label-editor-name")
+                    yield Select[str](
+                        [("No parent", NO_PARENT)],
+                        value=NO_PARENT,
+                        allow_blank=False,
+                        id="label-editor-parent",
+                    )
+                    yield Static(id="label-editor-palette-status")
+                    yield Static("Preview", id="label-editor-preview-label")
+                    yield Static(id="label-editor-preview-chip")
+                with ScrollableContainer(id="label-editor-palette-pane"):
+                    yield LabelColorGrid()
             yield LabelEditorFooter(id="label-editor-footer")
 
     def on_mount(self) -> None:
@@ -440,7 +390,7 @@ class LabelEditScreen(ModalScreen[LabelMutationResult | None]):
             return
 
         is_edit = self.seed.label_id is not None
-        self.query_one("#label-editor-title", Static).update(
+        self.query_one("#label-editor-heading", Static).update(
             "Edit label" if is_edit else "New label"
         )
 
@@ -451,7 +401,7 @@ class LabelEditScreen(ModalScreen[LabelMutationResult | None]):
 
         if current_label is not None:
             full_name = str(current_label.get("name") or "")
-            self.query_one("#label-name", Input).value = full_name.split("/")[-1]
+            self.query_one("#label-editor-name", Input).value = full_name.split("/")[-1]
             self._initial_parent_id = label_state.parent_label_id_for(
                 str(current_label.get("id") or "")
             )
@@ -461,7 +411,7 @@ class LabelEditScreen(ModalScreen[LabelMutationResult | None]):
             initial_background = None
             initial_text = None
 
-        parent_select = self.query_one("#label-parent", Select)
+        parent_select = self.query_one("#label-editor-parent", Select)
         parent_options = [("No parent", NO_PARENT)]
         for candidate in label_state.list_parent_candidates(self.seed.label_id):
             parent_options.append(
@@ -481,7 +431,7 @@ class LabelEditScreen(ModalScreen[LabelMutationResult | None]):
         footer.update_shortcuts(self.get_shortcuts())
         self._refresh_mode_status()
         self._refresh_preview()
-        self.query_one("#label-name", Input).focus()
+        self.query_one("#label-editor-name", Input).focus()
 
     def get_shortcuts(self) -> list[tuple[str, str]]:
         """Return footer shortcuts for the current label workflow."""
@@ -526,9 +476,11 @@ class LabelEditScreen(ModalScreen[LabelMutationResult | None]):
             self.dismiss(None)
             return
 
-        parent_value = str(self.query_one("#label-parent", Select).value or NO_PARENT)
+        parent_value = str(
+            self.query_one("#label-editor-parent", Select).value or NO_PARENT
+        )
         parent_label_id = None if parent_value == NO_PARENT else parent_value
-        name = self.query_one("#label-name", Input).value
+        name = self.query_one("#label-editor-name", Input).value
         background_color, text_color = self.query_one(LabelColorGrid).selected_colors()
         gmail_service = self._resolve_gmail_service()
         try:
@@ -586,8 +538,8 @@ class LabelEditScreen(ModalScreen[LabelMutationResult | None]):
         self._notify("Label deleted.", severity="information")
         self.dismiss(result)
 
-    @on(Input.Changed, "#label-name")
-    @on(Select.Changed, "#label-parent")
+    @on(Input.Changed, "#label-editor-name")
+    @on(Select.Changed, "#label-editor-parent")
     def on_form_changed(self, _event) -> None:
         """Keep the preview synchronized with current form values."""
         self._refresh_preview()
@@ -609,14 +561,18 @@ class LabelEditScreen(ModalScreen[LabelMutationResult | None]):
         toggle = binding_choices_label(
             settings.keybindings.compose_preview_toggle, "F2"
         )
-        self.query_one("#label-color-mode", Static).update(
+        self.query_one("#label-editor-palette-status", Static).update(
             f"Editing: {target} ({toggle} to toggle)"
         )
 
     def _refresh_preview(self) -> None:
         """Render the live label preview chip."""
-        name = self.query_one("#label-name", Input).value.strip() or "Label preview"
-        parent_value = str(self.query_one("#label-parent", Select).value or NO_PARENT)
+        name = (
+            self.query_one("#label-editor-name", Input).value.strip() or "Label preview"
+        )
+        parent_value = str(
+            self.query_one("#label-editor-parent", Select).value or NO_PARENT
+        )
         parent_name = ""
         label_state = getattr(self.app, "label_state", None)
         if parent_value != NO_PARENT and label_state is not None:
@@ -632,7 +588,7 @@ class LabelEditScreen(ModalScreen[LabelMutationResult | None]):
         )
         preview = Text(" Preview ", style=Style(dim=True))
         preview.append(f" {display_name} ", style=style)
-        self.query_one("#label-preview", Static).update(preview)
+        self.query_one("#label-editor-preview-chip", Static).update(preview)
 
     def _resolve_gmail_service(self):
         """Return the live Gmail service when the runtime provides one."""

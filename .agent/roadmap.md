@@ -8,10 +8,10 @@
 - [~] Phase 5: Composition & Offline (5.1 and 5.2 local-first slices implemented; outbound/provider sync pending)
 - [~] Phase 6: Polish & Distribution (6.1b and 6.2 implemented; broader hardening/distribution work pending)
 
-## Session State (Last Handover: Mar 26 2026)
-- **Last Action**: Implemented `Ticket 6.2` Pilot coverage plus custom label management UX: Gmail-backed label create/edit/delete, nesting validation, runtime shortcut/footer updates, a full documented color grid picker, and cleanup/hardening across the label/theme test surface.
-- **Next Step**: Start the next polish slice by validating the new label-management UX against real-account behavior and then decide whether to implement Gmail visibility settings (`labelListVisibility` / `messageListVisibility`) or leave them deferred.
-- **Blockers**: No immediate implementation blocker for the next polish slice; outbound mutation architecture still blocks broader provider sync-back work, and Gmail visibility semantics remain intentionally deferred product scope.
+## Session State (Last Handover: Mar 31 2026)
+- **Last Action**: Closed the session administratively, re-reviewed roadmap continuity after the lifecycle recovery hardening slice, and confirmed there were no additional code changes beyond the already-recorded wake/recovery work.
+- **Next Step**: Manually validate the new lifecycle recovery behavior under long-idle + sleep/wake conditions, then decide whether additional recovery affordances are needed (hard redraw command, sync timer pause/resume policy, or more aggressive worker invalidation).
+- **Blockers**: Provider sync-back is still intentionally deferred; lifecycle recovery needs real-world suspend/resume validation across terminals before we can treat the current hooks as sufficient.
 
 ## Granular Tickets (Migrated)
 
@@ -154,6 +154,10 @@
     - **Status Notes (Mar 25 2026)**:
         - Implemented: save/discard confirmation flow for dirty compose buffers, restore-on-discard for existing drafts, and cleanup of newly created empty drafts.
         - Remaining: real-inbox validation of compose copy/focus behavior and autosave-close race hardening.
+    - **Status Notes (Mar 27 2026)**:
+        - Implemented: local queued-send action (`send` binding) that freezes the current draft into a non-editable outbox state instead of sending immediately.
+        - Implemented: compose-close refresh fan-out now updates both `DRAFT` and `OUTBOX` virtual labels.
+        - Implemented: queued-send recovery flows (`cancel queue`) in compose, thread viewer, and thread-list Outbox context; trashed message/thread restore now exists as an explicit local-first action.
 - [ ] **Ticket 5.2**: Implement `MessageDraftService` (Local auto-save + provider sync later).
     - **Planning Notes**:
         - Local SQLite durability is phase-one requirement; provider draft sync is deferred until send/mutation contract is stable.
@@ -161,6 +165,8 @@
     - **Status Notes (Mar 24 2026)**:
         - Implemented (5.2a Local): `message_drafts` table, DB CRUD, `MessageDraft` model, service-layer persistence, debounced autosave, explicit save.
         - Deferred (5.2b Provider): provider draft sync and remote conflict resolution now depend on Ticket 5.7 mutation contract.
+    - **Status Notes (Mar 27 2026)**:
+        - Implemented: draft lifecycle state (`editing` vs `queued_to_send`) plus local outbox query/count support.
 - [ ] **Ticket 5.3**: Implement `ActionQueue` (Local queuing of archive/delete actions).
 - [ ] **Ticket 5.4**: Implement `ConnectivityMonitor` (Status bar heartbeats).
 - [ ] **Ticket 5.5**: `MarkdownInputAdapter` for Composer (Optional Authoring Format).
@@ -194,6 +200,22 @@
         - Failure recovery model (partial success, offline replay, and user-visible reconciliation status).
         - Account-scoping constraints with Ticket 7.1 to avoid cross-account mutation bleed.
         - Mid-sync connection loss behavior must preserve local intent without duplicating provider mutations.
+    - **Locked Design Decisions (Mar 27 2026)**:
+        - User-facing copy remains `labels`, but architecture separates `mailbox markers`, `user labels`, and `destination container` semantics.
+        - Main thread-list actions are thread-scoped; thread-view actions are message-scoped; no thread-wide actions inside the thread viewer.
+        - `TRASH` is the default destructive path; permanent delete happens only from Trash, while local drafts may be deleted directly.
+        - `TRASH` and `SPAM` hide messages from ordinary views immediately; if an open thread has no remaining visible cards in the current view, return to the thread list.
+        - `Move` stays first-pass and provider-agnostic: exactly one destination container, with separate bulk label add/remove actions.
+        - Queued send lands in local `OUTBOX`, not `SENT`, until provider replay exists.
+    - **Status Notes (Mar 27 2026)**:
+        - Implemented (5.7a Local-first scaffolding): `mutation_log` table, `MessageMutationService`, `OutboundMessageService`, local thread/message label/move/trash/delete actions, current-view visibility projection in DB queries, and action-picker UI shells.
+        - Implemented (5.7b Local UX follow-on): Outbox-specific thread affordances, queued-send recovery, restore-from-trash actions, and explicit queued indicators in thread/message surfaces.
+        - Implemented (5.7c Replay scaffolding): `MutationLogService`, explicit mutation state transitions, deferred replay adapter protocol, pending-status surfacing in thread/message UI, and a first replay worker/orchestrator that drives claim/execute/ack/fail/block transitions.
+        - Implemented (5.7d Inspector UX): mutation inspector modal, manual replay/block actions, and globally accessible diagnostic review from the keyboard.
+        - Implemented (5.7e Inline-first status UX): thread rows and message cards now explain queued/failed local state and recovery actions in place so mailbox surfaces remain self-describing without requiring the inspector.
+        - Implemented (5.7f Retry/backoff scaffolding): failed mutations now capture retry metadata (`retry_count`, `last_attempt_at`, `next_attempt_at`), and inline retry actions exist on thread/message surfaces via `Ctrl+R`.
+        - Implemented (5.7g Thread/mailbox UX corrections): thread rows are compact again with union label chips, generic pending/queued UI was removed for non-outbox mutations, thread-level label edits now apply as add/remove deltas, and category labels participate in label selection alongside user labels and mailbox markers.
+        - Remaining: provider adapter execution beyond deferred blocking, richer mutation inspection filters/bulk actions, automatic replay scheduling that respects backoff windows once sync-back is enabled, and later per-item inline action widgets beyond shortcut-driven recovery.
 - [ ] **Ticket 5.9**: Outbound Idempotency Contract.
     - **Goal**: Guarantee at-least-once local replay does not create duplicate provider-side effects.
     - **Scope**:
@@ -313,11 +335,42 @@
     - **Completed (Mar 26 2026)**:
         - Added Pilot coverage for theme-sensitive surfaces, modal warning/backdrop styling, and config-driven shortcut labels rendered in mounted footers/dialogs.
         - Added focused regression coverage around runtime shortcut rendering and theme token usage.
+    - **Completed (Mar 27 2026 follow-on polish)**:
+        - Validated the full Gmail web custom color grid (`64 x 64`) against the live Gmail API and confirmed the supported matrix is the web palette when sent as lowercase hex values.
+        - Reduced the label editor matrix to the validated Gmail custom palette, preserved Gmail-style ordering, and normalized all label color persistence/mutation payloads to lowercase.
+        - Reworked the label editor into a two-column form/palette layout and tuned swatch density, row count, and emphasis for ongoing UX iteration.
+        - Renamed label/thread/message styling hooks to semantic ids/classes and documented screen/component structure directly in `shmail/shmail.tcss` with ASCII trees plus explicit framework-internal exceptions.
 - [ ] **Ticket 6.3**: Configure GitHub Actions for CI/CD and PyInstaller builds.
 - [ ] **Ticket 6.4**: UI Performance & Error Resilience Refinement.
     - **Planning Notes (Mar 25 2026)**:
         - Sidebar and thread-list refresh paths should support both full refresh and targeted low-flicker patches through shared state/query contracts.
         - Future label editing should build on one label-state authority instead of bespoke widget mutation helpers.
+    - **Lifecycle / Recovery Slice (Planned Mar 27 2026)**:
+        - Add explicit app/screen resume handling for sleep/wake, focus return, and resize-driven repaint/reflow.
+        - Add wake-safe sync orchestration: cancel/ignore stale in-flight work, rebuild provider clients after wake before new sync/replay activity, and avoid stale sockets surviving across suspend.
+        - Add one user-facing recovery command/path for hard redraw / relayout / get-mail recovery without requiring app restart.
+        - Ensure visible screens reassert focus and refresh current data after lifecycle transitions rather than relying on incidental redraws.
+    - **Completed / In Progress (Mar 27 2026)**:
+        - Implemented: app-level lifecycle recovery path for `AppFocus`, `ScreenResume`, `ScreenSuspend`, and `Resize` transitions.
+        - Implemented: provider-client reset on lifecycle recovery so post-wake sync work rebuilds cached Gmail clients before continuing.
+        - Implemented: stale sync-result gating through lifecycle generation tracking to avoid pre-recovery worker results repainting resumed UI state.
+        - Implemented: `Get Mail` now functions as a user-triggered replay+sync recovery path on top of the lifecycle hardening work.
+    - **Follow-Up Solutions To Keep Ready (Pending Manual Validation)**:
+        - Add a dedicated hard-redraw / relayout command if focus/resume hooks are not sufficient to clear offset terminal state after wake.
+        - Pause and restart the periodic sync timer across suspend/resume if wake tests show timer drift or overlapping recovery/sync work.
+        - Invalidate or cancel additional worker classes beyond sync if any screen-level workers still apply stale pre-suspend results after recovery.
+        - Add stronger focus reassertion rules per screen if wake causes the app to become visually alive but keyboard-dead.
+        - Recreate auth/provider transport state more aggressively on wake if simple Gmail client reset is not enough to clear stale network failures.
+    - **Validation / Investigation Required Before Full Enablement**:
+        - Reproduce and validate behavior across at least one direct terminal runtime (Ghostty confirmed) plus one alternate terminal profile if possible.
+        - Confirm whether freeze symptoms correlate with stale network workers, terminal redraw/app-mode corruption, or both by checking post-wake logs and screen refresh behavior.
+        - Verify that any resume hook chosen by Textual fires reliably on focus-return/wake and that forced repaint does not introduce flicker or focus jumps.
+        - Verify whether a simple manual terminal resize clears any remaining offset state; if so, prioritize a stronger programmatic relayout/redraw follow-up.
+        - Verify whether `Get Mail` after wake clears stale-state symptoms without app restart; if not, escalate timer/client reset follow-ups above.
+    - **Still To Implement (label-management polish)**:
+        - Real-account manual validation of the refreshed label editor layout and picker behavior against Gmail UI expectations.
+        - Final decision and UX scope for Gmail-only label visibility controls.
+        - Any remaining low-flicker patch/refinement work discovered during real-account label editing tests.
 - [ ] **Ticket 6.5**: Implement Graceful Logout & Session Reset (`shmail --logout`).
     - **Planning Notes**:
         - Header account dropdown now exposes live actions (`Sign out of this account`, `Sign in another account`) and real known account emails.
@@ -363,3 +416,17 @@
 - [Mar 25 2026]: Ran a production-grade architecture review against roadmap intent. Recorded new governance rules around UTC determinism, exception discipline, single refresh authority, theme/runtime truth, stale-surface cleanup, and Textual worker freshness guarantees.
 - [Mar 26 2026 (Session Close)]: Closed the session administratively with no new code changes, refreshed `Session State` to target `Ticket 6.2` Pilot coverage next, and re-verified roadmap continuity after the Mar 25 refactor/polish work.
 - [Mar 26 2026]: Implemented `Ticket 6.2` Pilot coverage and shipped the first custom label-management slice: Gmail/user-label create-edit-delete flows, nested parent validation, global/new-edit shortcuts, a documented Gmail color-grid picker with keyboard navigation, label metadata persistence, and follow-up cleanup/hardening of modal/footer/theme code paths.
+- [Mar 27 2026]: Validated Gmail label color compatibility against the live API, confirmed the Gmail web custom palette is safe when sent as lowercase hex, and updated label mutation/storage flows to normalize color payloads accordingly.
+- [Mar 27 2026]: Continued `Ticket 6.2` polish on the label-management UI: aligned the picker with the validated Gmail custom palette ordering, refined the two-column modal/picker layout, and tuned swatch density/emphasis for ongoing UX iteration.
+- [Mar 27 2026]: Performed a semantic TCSS cleanup pass across the app surface: replaced app-specific Python class selectors with explicit ids/classes, documented screen/component trees inline in `shmail/shmail.tcss`, and isolated unavoidable Textual-internal selectors as explicit exceptions.
+- [Mar 27 2026]: Implemented the first provider-agnostic local mutation slice for Phase 5/5.7: draft queued-send lifecycle with `OUTBOX`, local mutation logging, thread-list and thread-view label/move/trash/delete actions, and view-aware visibility rules that hide `TRASH`/`SPAM` items until provider replay is enabled.
+- [Mar 27 2026]: Added the next local mutation UX pass: explicit restore-from-trash actions, Outbox-specific shortcut/indicator affordances, and queued-send cancellation that restores queued drafts back into editable local drafts.
+- [Mar 27 2026]: Added replay-contract scaffolding without enabling provider execution: mutation-log state helpers, deferred replay adapter protocol, and visible pending mutation indicators on thread/message surfaces.
+- [Mar 27 2026]: Added the next replay-management slice: mutation replay orchestrator, provider adapter registry, a mutation inspector modal with manual replay/block controls, and discoverable mutation shortcuts in the main/thread/compose surfaces.
+- [Mar 27 2026]: Shifted replay recovery further into the mail UI: inline thread/message status copy now advertises retry actions directly, and mutation-log retry/backoff metadata is stored for future scheduled replay work.
+- [Mar 27 2026]: Corrected thread/message labeling and thread-row presentation: mixed-label thread edits now preserve per-message differences via delta application, category labels are selectable, and thread rows now use union label chips plus compact glyphs instead of extra status lines or generic queued indicators.
+- [Mar 27 2026]: Added `Get Mail` as a user-triggered replay+sync action and finalized the user-facing mutation model: only `OUTBOX` is presented as queued, thread rows stay compact with union label chips, and retry remains inline-first while the mutation inspector is treated as optional diagnostic tooling.
+- [Mar 27 2026]: Investigated sleep/wake freeze and offset rendering behavior. Current diagnosis points to missing lifecycle recovery hooks (resume/repaint/reflow) plus wake-unsafe background sync/client state. Next hardening slice is to add explicit resume/redraw handling and safe post-wake sync/client reset behavior.
+- [Mar 27 2026]: Implemented the first lifecycle recovery hardening slice: app focus/resume/resize hooks now trigger centralized redraw/reflow recovery, cached provider clients are reset on recovery, and sync results are dropped when they predate the latest lifecycle generation.
+- [Mar 27 2026]: Recorded the next lifecycle-recovery contingencies for post-validation follow-up: optional hard redraw command, suspend-aware sync timer restart, stronger worker invalidation, and more aggressive provider/auth transport reset if manual wake testing still shows freeze or offset symptoms.
+- [Mar 31 2026 (Session Close)]: Executed the session-close workflow with no new code changes, refreshed `Session State` to carry forward the lifecycle-recovery validation target, and re-verified roadmap continuity for the next session.

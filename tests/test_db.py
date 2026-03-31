@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pytest
 
-from shmail.models import Message, MessageDraft
+from shmail.models import Label, Message, MessageDraft
 from shmail.services.db import DatabaseRepository
 
 
@@ -30,20 +30,19 @@ def test_upsert_label(test_db):
         )
 
     labels = test_db.get_labels()
-    assert len(labels) == 1
-    assert labels[0]["id"] == "INBOX"
-    assert labels[0]["name"] == "Inbox"
-    assert labels[0]["type"] == "SYSTEM"
-    assert labels[0]["label_list_visibility"] == "labelShow"
-    assert labels[0]["message_list_visibility"] == "show"
-    assert labels[0]["background_color"] == "#4986E7"
-    assert labels[0]["text_color"] == "#FFFFFF"
+    inbox = next(label for label in labels if label["id"] == "INBOX")
+    assert inbox["name"] == "Inbox"
+    assert inbox["type"] == "SYSTEM"
+    assert inbox["label_list_visibility"] == "labelShow"
+    assert inbox["message_list_visibility"] == "show"
+    assert inbox["background_color"] == "#4986E7"
+    assert inbox["text_color"] == "#FFFFFF"
 
     with test_db.transaction() as conn:
         test_db.upsert_label(conn, "INBOX", "Incoming", "SYSTEM")
     labels = test_db.get_labels()
-    assert len(labels) == 1
-    assert labels[0]["name"] == "Incoming"
+    inbox = next(label for label in labels if label["id"] == "INBOX")
+    assert inbox["name"] == "Incoming"
 
 
 def test_get_labels_ordering(test_db):
@@ -54,6 +53,7 @@ def test_get_labels_ordering(test_db):
         test_db.upsert_label(conn, "USER_2", "A-Label", "user")
 
     labels = test_db.get_labels()
+    labels = [label for label in labels if label["type"] != "virtual"]
 
     assert labels[0]["id"] == "INBOX"
     assert labels[1]["name"] == "A-Label"
@@ -412,6 +412,135 @@ def test_get_thread_messages_places_drafts_above_their_source_messages(test_db):
         "draft:draft_old",
         "msg_old",
     ]
+
+
+def test_get_thread_messages_shows_full_conversation_outside_spam_and_trash(test_db):
+    """Ensure thread view shows all non-trash/non-spam messages in a thread."""
+    newer = datetime.fromisoformat("2026-03-24T12:00:00+00:00")
+    older = datetime.fromisoformat("2026-03-24T11:00:00+00:00")
+
+    inbox_message = Message(
+        id="msg_inbox",
+        thread_id="thread_full",
+        subject="Testies",
+        sender="sender@example.com",
+        snippet="inbox",
+        timestamp=newer,
+        labels=[Label(id="INBOX", name="Inbox", type="system")],
+    )
+    sent_message = Message(
+        id="msg_sent",
+        thread_id="thread_full",
+        subject="Re: Testies",
+        sender="me@example.com",
+        snippet="sent",
+        timestamp=older,
+        labels=[Label(id="SENT", name="Sent", type="system")],
+    )
+
+    with test_db.transaction() as conn:
+        test_db.upsert_message(conn, inbox_message)
+        test_db.upsert_message(conn, sent_message)
+
+    rows = test_db.get_thread_messages("thread_full", label_id="INBOX")
+
+    assert [row["id"] for row in rows] == ["msg_inbox", "msg_sent"]
+
+
+def test_get_threads_counts_full_conversation_across_inbox_and_sent(test_db):
+    """Ensure thread row counts include full visible conversation membership."""
+    newer = datetime.fromisoformat("2026-03-24T12:00:00+00:00")
+    older = datetime.fromisoformat("2026-03-24T11:00:00+00:00")
+
+    inbox_message = Message(
+        id="msg_count_inbox",
+        thread_id="thread_count_full",
+        subject="Testies",
+        sender="sender@example.com",
+        snippet="inbox",
+        timestamp=newer,
+        labels=[Label(id="INBOX", name="INBOX", type="system")],
+    )
+    sent_message = Message(
+        id="msg_count_sent",
+        thread_id="thread_count_full",
+        subject="Re: Testies",
+        sender="me@example.com",
+        snippet="sent",
+        timestamp=older,
+        labels=[Label(id="SENT", name="SENT", type="system")],
+    )
+
+    with test_db.transaction() as conn:
+        test_db.upsert_message(conn, inbox_message)
+        test_db.upsert_message(conn, sent_message)
+
+    rows = test_db.get_threads("INBOX")
+
+    assert len(rows) == 1
+    assert rows[0]["thread_count"] == 2
+
+
+def test_get_labels_normalizes_system_label_display_names(test_db):
+    """Ensure system labels are exposed with user-facing names on read."""
+    with test_db.transaction() as conn:
+        test_db.upsert_label(conn, "INBOX", "INBOX", "system")
+        test_db.upsert_label(conn, "SENT", "SENT", "system")
+
+    labels = {label["id"]: label["name"] for label in test_db.get_labels()}
+
+    assert labels["INBOX"] == "Inbox"
+    assert labels["SENT"] == "Sent"
+
+
+def test_list_message_labels_normalizes_system_label_display_names(test_db):
+    """Ensure message label chips receive case-correct system label names."""
+    message = Message(
+        id="msg_labels",
+        thread_id="thread_labels",
+        subject="Labels",
+        sender="sender@example.com",
+        snippet="snippet",
+        timestamp=datetime.fromisoformat("2026-03-24T12:00:00+00:00"),
+        labels=[
+            Label(id="INBOX", name="INBOX", type="system"),
+            Label(id="SENT", name="SENT", type="system"),
+        ],
+    )
+
+    with test_db.transaction() as conn:
+        test_db.upsert_message(conn, message)
+
+    labels = {
+        label["id"]: label["name"]
+        for label in test_db.list_message_labels("msg_labels")
+    }
+
+    assert labels["INBOX"] == "Inbox"
+    assert labels["SENT"] == "Sent"
+
+
+def test_list_message_labels_normalizes_category_label_display_names(test_db):
+    """Ensure category system labels use user-facing names in message chips."""
+    message = Message(
+        id="msg_category_labels",
+        thread_id="thread_category_labels",
+        subject="Categories",
+        sender="sender@example.com",
+        snippet="snippet",
+        timestamp=datetime.fromisoformat("2026-03-24T12:00:00+00:00"),
+        labels=[Label(id="CATEGORY_FORUMS", name="CATEGORY_FORUMS", type="system")],
+    )
+
+    with test_db.transaction() as conn:
+        test_db.upsert_message(conn, message)
+
+    labels = {
+        label["id"]: label["name"]
+        for label in test_db.list_message_labels("msg_category_labels")
+    }
+
+    assert labels["CATEGORY_FORUMS"] == "Forums"
 
 
 def test_get_labels_with_counts_uses_total_local_drafts_for_draft_label(test_db):

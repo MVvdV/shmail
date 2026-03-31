@@ -192,10 +192,14 @@ class LabelStateService:
                         "text_color"
                     ):
                         descendant_color = {
-                            "backgroundColor": str(
-                                descendant.get("background_color") or ""
-                            ),
-                            "textColor": str(descendant.get("text_color") or ""),
+                            "backgroundColor": self._normalize_color_value(
+                                str(descendant.get("background_color") or "")
+                            )
+                            or "",
+                            "textColor": self._normalize_color_value(
+                                str(descendant.get("text_color") or "")
+                            )
+                            or "",
                         }
                     patched_descendant = self._patch_provider_label(
                         gmail_service,
@@ -210,7 +214,7 @@ class LabelStateService:
 
     def delete_label(self, *, label_id: str, gmail_service=None) -> LabelMutationResult:
         """Delete one user label when it has no nested descendants."""
-        label = self._require_user_label(label_id)
+        self._require_user_label(label_id)
         descendants = self.list_descendants(label_id)
         if descendants:
             raise ValueError("Delete sublabels first before removing this label.")
@@ -268,13 +272,19 @@ class LabelStateService:
         background_color: str | None, text_color: str | None
     ) -> dict[str, str] | None:
         """Return one normalized Gmail color payload or None."""
-        background = str(background_color or "").strip() or None
-        text = str(text_color or "").strip() or None
+        background = LabelStateService._normalize_color_value(background_color)
+        text = LabelStateService._normalize_color_value(text_color)
         if background is None and text is None:
             return None
         if background is None or text is None:
             raise ValueError("Choose both background and text colors.")
         return {"backgroundColor": background, "textColor": text}
+
+    @staticmethod
+    def _normalize_color_value(color: str | None) -> str | None:
+        """Return one trimmed lowercase hex color or None."""
+        value = str(color or "").strip()
+        return value.lower() or None
 
     @staticmethod
     def _build_provider_body(

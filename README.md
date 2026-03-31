@@ -29,9 +29,10 @@ Shmail currently focuses on:
 - Gmail sync into a local SQLite cache
 - keyboard-first thread reading and triage
 - local-first compose and draft workflows
+- local-first message/thread mutation architecture with deferred provider replay
 - configurable themes and keybindings
 
-Outbound mutation sync-back and broader provider support are planned, but still ahead on the roadmap.
+Provider sync-back is still deferred. Shmail now provisions local-first mutation architecture for drafts, outbox, labels, move, trash, and delete behavior before replaying anything back to Gmail.
 
 ## Get started
 
@@ -112,10 +113,18 @@ up = "k,up"
 down = "j,down"
 close = "q,escape"
 compose = "c"
+get_mail = "ctrl+g"
+mutations = "ctrl+m"
 reply = "r"
 reply_all = "a"
 forward = "f"
 delete_draft = "x"
+trash = "x"
+labels = "l"
+move = "m"
+restore = "u"
+retry = "ctrl+r"
+send = "ctrl+enter"
 first = "g"
 last = "G"
 pane_next = "tab"
@@ -134,6 +143,16 @@ For people who want the technical shape without reading the whole codebase:
 - Storage uses SQLite with WAL mode for local caching.
 - Blocking work is pushed off the UI thread through Textual workers.
 - Drafts are local-first and follow explicit lifecycle rules for save, discard, restore, and delete.
+- Outbound send is currently a local outbox queue, not an immediate provider send.
+- Message and thread state changes reconcile locally first through provider-agnostic mutation records.
+- Trash restore and queued-send cancellation are available locally before provider replay exists.
+- Provider replay is scaffolded behind explicit mutation-log states, but execution is still intentionally deferred.
+- A mutation inspector is available from `Ctrl+M` as optional diagnostic tooling, while mailbox/thread/message surfaces remain the primary place users understand local-first state.
+- Failed or blocked local replay can now be retried inline from the affected thread/message surfaces with `Ctrl+R`.
+- `Ctrl+G` runs a user-triggered replay-and-sync pass (`Get Mail`) without changing the deferred-by-default provider execution policy.
+- Thread rows stay compact and show a union of conversation labels as chips; only outbound send is presented as queued in the user-facing UI.
+- Sleep/wake recovery now forces redraw/reflow and resets cached provider clients so resumed terminals are less likely to stay visually stale or network-stuck after long idle periods.
+- User-facing labels map internally to mailbox markers, user labels, and destination-container rules.
 - Time handling is normalized around UTC-aware timestamps.
 - UI reads are being pushed behind query services so screens and widgets stay thinner and more deterministic.
 - Theme resolution is runtime-driven and compatible with Omarchy-style palette files without making Omarchy a hard dependency.
@@ -154,4 +173,5 @@ Current work is focused on:
 - stronger repository/service/query-service boundaries
 - theme robustness and compatibility
 - local-first compose and draft correctness
-- outbound mutation and provider sync-back architecture
+- local-first message/thread mutation behavior and outbox lifecycle
+- provider-neutral replay architecture before enabling provider sync-back

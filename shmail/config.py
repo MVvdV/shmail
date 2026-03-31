@@ -82,6 +82,14 @@ class Keybindings(BaseModel):
     account: str = Field(
         default="a", description="Focus and open the account selector in the header."
     )
+    get_mail: str = Field(
+        default="ctrl+g",
+        description="Run a user-triggered sync and replay pass.",
+    )
+    mutations: str = Field(
+        default="ctrl+m",
+        description="Open the mutation inspector for pending and failed local replay items.",
+    )
     compose: str = Field(
         default="c", description="Open message draft composer from supported screens."
     )
@@ -92,6 +100,29 @@ class Keybindings(BaseModel):
     forward: str = Field(default="f", description="Forward the focused message.")
     delete_draft: str = Field(
         default="x", description="Delete the focused draft when available."
+    )
+    trash: str = Field(
+        default="x", description="Trash the focused message or thread when available."
+    )
+    labels: str = Field(
+        default="l",
+        description="Open the add/remove labels workflow for the focused item.",
+    )
+    move: str = Field(
+        default="m",
+        description="Move the focused message or thread to one destination container.",
+    )
+    restore: str = Field(
+        default="u",
+        description="Restore the focused trashed message or thread back to Inbox.",
+    )
+    retry: str = Field(
+        default="ctrl+r",
+        description="Retry failed or blocked local replay for the focused message or thread.",
+    )
+    send: str = Field(
+        default="ctrl+enter",
+        description="Queue the current draft to send without immediate provider sync.",
     )
     compose_preview_toggle: str = Field(
         default="f2",

@@ -7,6 +7,7 @@ from textual.binding import Binding
 from textual.widget import Widget
 from textual.worker import WorkerCancelled
 from shmail.config import settings
+from .message_actions import LabelSelectionScreen, MoveSelectionScreen
 from .message_draft import MessageDraftCloseUpdate, MessageDraftScreen, MessageDraftSeed
 from shmail.services.message_draft import MessageDraftService
 from shmail.widgets.shortcuts import resolve_shortcut_owner
@@ -30,6 +31,13 @@ class ThreadMessagesScreen(ModalScreen):
             "Delete Draft",
             show=False,
         ),
+        Binding(settings.keybindings.labels, "edit_labels", "Labels", show=False),
+        Binding(settings.keybindings.move, "move_message", "Move", show=False),
+        Binding(settings.keybindings.trash, "trash_message", "Trash", show=False),
+        Binding(settings.keybindings.restore, "restore_message", "Restore", show=False),
+        Binding(
+            settings.keybindings.retry, "retry_message_mutations", "Retry", show=False
+        ),
         Binding(settings.keybindings.down, "next_message", "Next Message", show=False),
         Binding(
             settings.keybindings.up, "prev_message", "Previous Message", show=False
@@ -52,9 +60,10 @@ class ThreadMessagesScreen(ModalScreen):
         ),
     ]
 
-    def __init__(self, thread_id: str):
-        super().__init__(id="thread-messages-screen")
+    def __init__(self, thread_id: str, view_label_id: str | None = None):
+        super().__init__(id="thread-viewer-screen")
         self.thread_id = thread_id
+        self.view_label_id = view_label_id
 
     @property
     def shmail_app(self) -> "ShmailApp":
@@ -74,7 +83,9 @@ class ThreadMessagesScreen(ModalScreen):
     async def _reload_thread_messages(self) -> None:
         """Reload thread messages from storage and re-mount message cards."""
         worker = self.run_worker(
-            lambda: self.shmail_app.thread_viewer.list_thread_messages(self.thread_id),
+            lambda: self.shmail_app.thread_viewer.list_thread_messages(
+                self.thread_id, self.view_label_id
+            ),
             thread=True,
             exclusive=False,
         )
@@ -227,6 +238,31 @@ class ThreadMessagesScreen(ModalScreen):
         if not draft_id:
             return
 
+        if str(source_data.get("draft_state") or "") == "queued_to_send":
+            restored = MessageDraftService(
+                self.shmail_app.repository
+            ).cancel_queued_send(draft_id)
+            if restored is None:
+                return
+            notify = getattr(self.app, "notify", None)
+            if callable(notify):
+                notify(
+                    "Queued send cancelled; draft restored locally.",
+                    severity="information",
+                )
+            apply_update = getattr(self.shmail_app, "apply_message_draft_update", None)
+            update = MessageDraftCloseUpdate(
+                did_change=True,
+                draft_id=draft_id,
+                source_thread_id=str(source_data.get("thread_id") or "") or None,
+                draft_state="editing",
+            )
+            if callable(apply_update):
+                apply_update(update)
+            else:
+                self.reload_thread_if_matching(update.source_thread_id or "")
+            return
+
         MessageDraftService(self.shmail_app.repository).delete_draft(draft_id)
         notify = getattr(self.app, "notify", None)
         if callable(notify):
@@ -242,6 +278,103 @@ class ThreadMessagesScreen(ModalScreen):
             apply_update(update)
         else:
             self.reload_thread_if_matching(update.source_thread_id or "")
+
+    def action_edit_labels(self) -> None:
+        """Open label add/remove workflow for the focused message."""
+        message_item = self._resolve_focused_message_item()
+        if message_item is None or bool(message_item.message_data.get("is_draft")):
+            return
+        message_id = str(message_item.message_data.get("id") or "")
+        selected = [
+            str(label.get("id") or "")
+            for label in list(message_item.message_data.get("labels") or [])
+        ]
+        self.app.push_screen(
+            LabelSelectionScreen(
+                selected_label_ids=selected,
+                title=f"Label Message: {str(message_item.message_data.get('subject') or '(No Subject)')}",
+            ),
+            lambda selection: self._on_message_labels_selected(message_id, selection),
+        )
+
+    def action_move_message(self) -> None:
+        """Open destination-container picker for the focused message."""
+        message_item = self._resolve_focused_message_item()
+        if message_item is None or bool(message_item.message_data.get("is_draft")):
+            return
+        self.app.push_screen(
+            MoveSelectionScreen(current_view_label_id=self.view_label_id),
+            lambda destination: self._on_message_move_selected(
+                str(message_item.message_data.get("id") or ""), destination
+            ),
+        )
+
+    def action_trash_message(self) -> None:
+        """Trash or permanently delete the focused message, based on current view."""
+        message_item = self._resolve_focused_message_item()
+        if message_item is None:
+            return
+        source_data = dict(message_item.message_data)
+        if source_data.get("is_draft"):
+            self.action_delete_draft()
+            return
+        message_id = str(source_data.get("id") or "")
+        if not message_id:
+            return
+        if str(self.view_label_id or "").upper() == "TRASH":
+            result = self.shmail_app.message_mutation.delete_message_forever(
+                account_id=self.shmail_app.email or "",
+                provider_key=self.shmail_app.provider_key,
+                message_id=message_id,
+                current_view_label_id=self.view_label_id,
+            )
+            self._apply_message_mutation_result(result, deleted=True)
+            return
+        result = self.shmail_app.message_mutation.trash_message(
+            account_id=self.shmail_app.email or "",
+            provider_key=self.shmail_app.provider_key,
+            message_id=message_id,
+            current_view_label_id=self.view_label_id,
+        )
+        self._apply_message_mutation_result(result)
+
+    def action_restore_message(self) -> None:
+        """Restore the focused trashed message back to Inbox locally."""
+        if str(self.view_label_id or "").upper() != "TRASH":
+            return
+        message_item = self._resolve_focused_message_item()
+        if message_item is None or bool(message_item.message_data.get("is_draft")):
+            return
+        message_id = str(message_item.message_data.get("id") or "")
+        if not message_id:
+            return
+        result = self.shmail_app.message_mutation.restore_message(
+            account_id=self.shmail_app.email or "",
+            provider_key=self.shmail_app.provider_key,
+            message_id=message_id,
+            current_view_label_id=self.view_label_id,
+        )
+        self._apply_message_mutation_result(result)
+
+    def action_retry_message_mutations(self) -> None:
+        """Retry failed or blocked mutations for the focused message."""
+        message_item = self._resolve_focused_message_item()
+        if message_item is None or bool(message_item.message_data.get("is_draft")):
+            return
+        message_id = str(message_item.message_data.get("id") or "")
+        if not message_id:
+            return
+        mutation_ids = self.shmail_app.mutation_log.retry_message_mutations(message_id)
+        if not mutation_ids:
+            notify = getattr(self.app, "notify", None)
+            if callable(notify):
+                notify(
+                    "No failed or blocked message mutations to retry.",
+                    severity="warning",
+                )
+            return
+        self.shmail_app.replay_mutations(mutation_ids)
+        self.reload_thread_if_matching(self.thread_id)
 
     def _open_compose_from_focus(self, action: str | None) -> None:
         """Open or resume compose from the currently focused thread card."""
@@ -295,6 +428,53 @@ class ThreadMessagesScreen(ModalScreen):
         """Returns all MessageItem widgets in the thread stack order."""
         stack = self.query_one("#thread-stack")
         return [child for child in stack.children if isinstance(child, MessageItem)]
+
+    def _on_message_labels_selected(
+        self, message_id: str, selection: list[str] | None
+    ) -> None:
+        """Apply label selection results for one focused message."""
+        if selection is None:
+            return
+        result = self.shmail_app.message_mutation.sync_message_labels(
+            account_id=self.shmail_app.email or "",
+            provider_key=self.shmail_app.provider_key,
+            message_id=message_id,
+            selected_label_ids=selection,
+            current_view_label_id=self.view_label_id,
+        )
+        self._apply_message_mutation_result(result)
+
+    def _on_message_move_selected(
+        self, message_id: str, destination_label_id: str | None
+    ) -> None:
+        """Apply move selection result for one focused message."""
+        if destination_label_id is None:
+            return
+        result = self.shmail_app.message_mutation.move_message(
+            account_id=self.shmail_app.email or "",
+            provider_key=self.shmail_app.provider_key,
+            message_id=message_id,
+            destination_label_id=destination_label_id,
+            current_view_label_id=self.view_label_id,
+        )
+        self._apply_message_mutation_result(result)
+
+    def _apply_message_mutation_result(self, result, deleted: bool = False) -> None:
+        """Refresh thread-view surfaces after one local-first message mutation."""
+        apply_update = getattr(self.shmail_app, "apply_local_mail_update", None)
+        if callable(apply_update):
+            apply_update(self.view_label_id, result.affected_thread_ids)
+        if result.thread_became_empty:
+            self.app.pop_screen()
+            return
+        notify = getattr(self.app, "notify", None)
+        if callable(notify):
+            notify(
+                "Message deleted locally."
+                if deleted
+                else "Message updated locally; provider sync is still deferred.",
+                severity="information",
+            )
 
     def _resolve_focused_message_item(self) -> MessageItem | None:
         """Resolves focused context to the owning message card."""

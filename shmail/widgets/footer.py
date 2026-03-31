@@ -6,3 +6,6 @@ class AppFooter(ShortcutFooter):
 
     version_id = "app-version"
     shortcuts_id = "app-shortcuts"
+
+    def __init__(self) -> None:
+        super().__init__(id="app-footer")

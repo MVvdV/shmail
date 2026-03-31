@@ -68,8 +68,8 @@ def test_create_label_stores_nested_name_and_color_metadata(test_db):
     created = test_db.get_label(result.label_id or "")
     assert created is not None
     assert created["name"] == "Projects/Shmail"
-    assert created["background_color"] == "#4986E7"
-    assert created["text_color"] == "#FFFFFF"
+    assert created["background_color"] == "#4986e7"
+    assert created["text_color"] == "#ffffff"
 
 
 def test_update_label_renames_descendants_with_parent_move(test_db):
@@ -94,7 +94,7 @@ def test_update_label_renames_descendants_with_parent_move(test_db):
     assert updated is not None
     assert descendant is not None
     assert updated["name"] == "Archive/Active"
-    assert updated["background_color"] == "#16A765"
+    assert updated["background_color"] == "#16a765"
     assert descendant["name"] == "Archive/Active/Urgent"
 
 
@@ -156,3 +156,10 @@ def test_update_label_clears_local_colors_when_provider_clears_them(test_db):
     assert stored["background_color"] is None
     assert stored["text_color"] is None
     assert gmail.patches == [("project", {"name": "Project", "color": None})]
+
+
+def test_normalize_color_lowercases_hex_values():
+    """Ensure outgoing Gmail color payloads use lowercase hex values."""
+    color = LabelStateService._normalize_color(" #4986E7 ", " #FFFFFF ")
+
+    assert color == {"backgroundColor": "#4986e7", "textColor": "#ffffff"}

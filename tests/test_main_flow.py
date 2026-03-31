@@ -116,6 +116,36 @@ def _is_within(widget, ancestor) -> bool:
     return False
 
 
+def test_thread_row_outbox_labels_include_outbox_chip():
+    """Queued outbox rows should surface Outbox through label chips."""
+    row = ThreadRow(
+        {
+            "thread_id": "thread-1",
+            "current_label_id": "OUTBOX",
+            "outbox_count": 1,
+            "has_outbox": 1,
+            "thread_labels": [{"id": "OUTBOX", "name": "Outbox"}],
+        }
+    )
+
+    assert "Outbox" in row._render_label_chips()
+
+
+def test_message_item_failed_state_renders_failure_icon_chip():
+    """Failed message mutations should render an inline status icon chip."""
+    item = MessageItem(
+        {
+            "subject": "Test",
+            "sender": "A",
+            "recipient_to": "B",
+            "timestamp": "2026-03-25T10:00:00+00:00",
+            "mutation_failed_count": 1,
+        }
+    )
+
+    assert "!" in item._render_label_chips()
+
+
 def test_sidebar_labels_load(test_db):
     """Verifies labels are correctly populated in the Labels sidebar."""
     with test_db.transaction() as conn:
@@ -826,8 +856,8 @@ def test_compose_preview_toggle_binding_switches_between_tabs(test_db):
     asyncio.run(run_test())
 
 
-def test_draft_thread_row_shows_draft_indicator_symbol(test_db):
-    """Verify threads loaded from DRAFT label include visible draft marker."""
+def test_draft_thread_row_shows_drafts_label_chip(test_db):
+    """Verify draft threads surface Drafts as a label chip."""
     now = datetime.now()
     with test_db.transaction() as conn:
         test_db.upsert_label(conn, "DRAFT", "Drafts", "system")
@@ -864,14 +894,14 @@ def test_draft_thread_row_shows_draft_indicator_symbol(test_db):
             await pilot.pause()
 
             row = thread_list.query_one(ThreadRow)
-            indicator = row.query_one(".draft-indicator", Static)
-            assert "✎" in str(indicator.render_line(0))
+            chips = row.query_one(".thread-label-chips", Static)
+            assert "Drafts" in str(chips.render_line(0))
 
     asyncio.run(run_test())
 
 
-def test_thread_row_draft_indicator_updates_without_label_switch(test_db):
-    """Verify draft marker appears after revision bump without changing labels."""
+def test_thread_row_draft_chip_updates_without_label_switch(test_db):
+    """Verify Drafts chip appears after revision bump without changing labels."""
     inbox = Label(id="INBOX", name="Inbox", type="system")
     now = datetime.now()
     message = Message(
@@ -894,8 +924,8 @@ def test_thread_row_draft_indicator_updates_without_label_switch(test_db):
             await pilot.pause()
 
             thread_row = app.screen.query_one(ThreadRow)
-            draft_indicator = thread_row.query_one(".draft-indicator", Static)
-            assert "✎" not in str(draft_indicator.render_line(0))
+            chips = thread_row.query_one(".thread-label-chips", Static)
+            assert "Drafts" not in str(chips.render_line(0))
 
             with test_db.transaction() as conn:
                 test_db.upsert_message_draft(
@@ -926,8 +956,8 @@ def test_thread_row_draft_indicator_updates_without_label_switch(test_db):
             await pilot.pause()
 
             updated_row = app.screen.query_one(ThreadRow)
-            updated_indicator = updated_row.query_one(".draft-indicator", Static)
-            assert "✎" in str(updated_indicator.render_line(0))
+            updated_chips = updated_row.query_one(".thread-label-chips", Static)
+            assert "Drafts" in str(updated_chips.render_line(0))
 
     asyncio.run(run_test())
 
@@ -960,8 +990,8 @@ def test_new_label_modal_creates_nested_user_label(test_db):
             await pilot.pause()
 
             assert isinstance(app.screen, LabelEditScreen)
-            app.screen.query_one("#label-name", Input).value = "Shmail"
-            parent_select = app.screen.query_one("#label-parent", Select)
+            app.screen.query_one("#label-editor-name", Input).value = "Shmail"
+            parent_select = app.screen.query_one("#label-editor-parent", Select)
             parent_select.value = "projects"
             await pilot.pause()
 
@@ -999,16 +1029,16 @@ def test_edit_label_modal_updates_selected_user_label(test_db):
             assert label_item is not None
             labels_sidebar.label_list.focus()
             await pilot.pause()
-            await pilot.press("down")
-            await pilot.pause()
-            await pilot.press("down")
+            labels_sidebar.label_list.index = labels_sidebar.label_list.children.index(
+                label_item
+            )
             await pilot.pause()
 
             await pilot.press("e")
             await pilot.pause()
 
             assert isinstance(app.screen, LabelEditScreen)
-            name_field = app.screen.query_one("#label-name", Input)
+            name_field = app.screen.query_one("#label-editor-name", Input)
             name_field.value = "Renamed"
             await pilot.pause()
 
@@ -1098,7 +1128,10 @@ def test_shortcut_labels_follow_configured_bindings(monkeypatch):
         settings.keybindings.label_edit = "ctrl+e"
 
         labels_shortcuts = LabelsSidebar().get_shortcuts()
-        thread_shortcuts = ThreadList().get_shortcuts()
+        thread_list = ThreadList()
+        thread_shortcuts = thread_list.get_shortcuts()
+        thread_list.current_label_id = "OUTBOX"
+        outbox_shortcuts = thread_list.get_shortcuts()
         message_shortcuts = MessageItem(
             {
                 "subject": "Test",
@@ -1111,6 +1144,7 @@ def test_shortcut_labels_follow_configured_bindings(monkeypatch):
         assert ("Home/End", "Home/End") in labels_shortcuts
         assert ("Ctrl+l", "Threads") in labels_shortcuts
         assert ("Home/End", "Home/End") in thread_shortcuts
+        assert ("x", "Cancel Queue") in outbox_shortcuts
         assert any(shortcut[0].startswith("n/") for shortcut in message_shortcuts)
     finally:
         settings.keybindings.first = original_first

@@ -124,11 +124,37 @@ class DatabaseRepository:
                         body TEXT,
                         source_message_id TEXT,
                         source_thread_id TEXT,
+                        state TEXT NOT NULL DEFAULT 'editing',
+                        queued_at DATETIME,
                         created_at DATETIME NOT NULL,
                         updated_at DATETIME NOT NULL
                     )
                     """
                 )
+
+                self._ensure_message_draft_schema(conn)
+
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS mutation_log (
+                        id TEXT PRIMARY KEY,
+                        account_id TEXT NOT NULL,
+                        provider_key TEXT NOT NULL,
+                        target_kind TEXT NOT NULL,
+                        target_id TEXT NOT NULL,
+                        action_type TEXT NOT NULL,
+                        payload_json TEXT NOT NULL DEFAULT '{}',
+                        state TEXT NOT NULL DEFAULT 'pending_local',
+                        error_message TEXT,
+                        retry_count INTEGER NOT NULL DEFAULT 0,
+                        last_attempt_at DATETIME,
+                        next_attempt_at DATETIME,
+                        created_at DATETIME NOT NULL,
+                        updated_at DATETIME NOT NULL
+                    )
+                    """
+                )
+                self._ensure_mutation_log_schema(conn)
 
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS contacts (
@@ -138,6 +164,7 @@ class DatabaseRepository:
                         last_interaction DATETIME
                     )
                 """)
+                self._ensure_virtual_labels(conn)
                 conn.commit()
         except Exception:
             logger.exception("Failed to initialize database schema")
@@ -175,6 +202,51 @@ class DatabaseRepository:
             if column not in existing_columns:
                 conn.execute(f"ALTER TABLE labels ADD COLUMN {column} {definition}")
 
+    def _ensure_message_draft_schema(self, conn: sqlite3.Connection) -> None:
+        """Apply additive schema updates required by the current draft model."""
+        rows = conn.execute("PRAGMA table_info(message_drafts)").fetchall()
+        existing_columns = {row["name"] for row in rows}
+        required_columns = {
+            "state": "TEXT NOT NULL DEFAULT 'editing'",
+            "queued_at": "DATETIME",
+        }
+
+        for column, definition in required_columns.items():
+            if column not in existing_columns:
+                conn.execute(
+                    f"ALTER TABLE message_drafts ADD COLUMN {column} {definition}"
+                )
+
+    def _ensure_mutation_log_schema(self, conn: sqlite3.Connection) -> None:
+        """Apply additive schema updates required by the current mutation log model."""
+        rows = conn.execute("PRAGMA table_info(mutation_log)").fetchall()
+        existing_columns = {row["name"] for row in rows}
+        required_columns = {
+            "retry_count": "INTEGER NOT NULL DEFAULT 0",
+            "last_attempt_at": "DATETIME",
+            "next_attempt_at": "DATETIME",
+        }
+        for column, definition in required_columns.items():
+            if column not in existing_columns:
+                conn.execute(
+                    f"ALTER TABLE mutation_log ADD COLUMN {column} {definition}"
+                )
+
+    def _ensure_virtual_labels(self, conn: sqlite3.Connection) -> None:
+        """Insert built-in local-only labels used by Shmail projections."""
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO labels (id, name, type)
+            VALUES ('DRAFT', 'DRAFT', 'virtual')
+            """
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO labels (id, name, type)
+            VALUES ('OUTBOX', 'OUTBOX', 'virtual')
+            """
+        )
+
     def get_metadata(self, key: str) -> Optional[str]:
         """Return a metadata value for the provided key."""
         with self.get_connection() as conn:
@@ -203,6 +275,7 @@ class DatabaseRepository:
                 """
                 SELECT * FROM message_drafts
                 WHERE mode = ?
+                  AND state = 'editing'
                   AND (
                     source_message_id = ?
                     OR (source_message_id IS NULL AND ? IS NULL)
@@ -228,9 +301,202 @@ class DatabaseRepository:
         """Return all persisted message drafts sorted by update time."""
         with self.get_connection() as conn:
             rows = conn.execute(
-                "SELECT * FROM message_drafts ORDER BY updated_at DESC"
+                "SELECT * FROM message_drafts WHERE state = 'editing' ORDER BY updated_at DESC"
             ).fetchall()
             return [dict(row) for row in rows]
+
+    def list_queued_outbound_drafts(self) -> List[dict]:
+        """Return local drafts that are queued for send."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM message_drafts WHERE state = 'queued_to_send' ORDER BY COALESCE(queued_at, updated_at) DESC"
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_thread_draft_ids(self, thread_id: str, *, state: str) -> List[str]:
+        """Return local draft ids for one resolved thread and lifecycle state."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id
+                FROM message_drafts
+                WHERE COALESCE(source_thread_id, 'draft:' || id) = ?
+                  AND state = ?
+                ORDER BY updated_at DESC
+                """,
+                (thread_id, state),
+            ).fetchall()
+            return [str(row["id"]) for row in rows]
+
+    def list_mutations(
+        self, *, states: List[str] | None = None, limit: int = 100
+    ) -> List[dict]:
+        """Return recent mutation log rows, optionally filtered by state."""
+        with self.get_connection() as conn:
+            if states:
+                placeholders = ", ".join(["?"] * len(states))
+                rows = conn.execute(
+                    f"SELECT * FROM mutation_log WHERE state IN ({placeholders}) ORDER BY updated_at DESC LIMIT ?",
+                    (*states, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM mutation_log ORDER BY updated_at DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            return [dict(row) for row in rows]
+
+    def get_mutation(self, mutation_id: str) -> dict | None:
+        """Return one mutation log row by identifier."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM mutation_log WHERE id = ?",
+                (mutation_id,),
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+    def list_retryable_mutation_ids_for_target(
+        self, *, target_kind: str, target_id: str
+    ) -> List[str]:
+        """Return failed or blocked mutation ids for one target."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id
+                FROM mutation_log
+                WHERE target_kind = ?
+                  AND target_id = ?
+                  AND state IN ('failed', 'blocked')
+                ORDER BY updated_at DESC
+                """,
+                (target_kind, target_id),
+            ).fetchall()
+            return [str(row["id"]) for row in rows]
+
+    def list_retryable_mutation_ids_for_thread(self, thread_id: str) -> List[str]:
+        """Return failed or blocked mutation ids associated with one thread context."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                """
+                WITH MessageScoped AS (
+                    SELECT id
+                    FROM messages
+                    WHERE thread_id = ?
+                )
+                SELECT DISTINCT ml.id
+                FROM mutation_log ml
+                WHERE ml.state IN ('failed', 'blocked')
+                  AND (
+                    (ml.target_kind = 'thread' AND ml.target_id = ?)
+                    OR (ml.target_kind = 'message' AND ml.target_id IN (SELECT id FROM MessageScoped))
+                    OR (ml.target_kind = 'draft' AND ml.target_id IN (
+                        SELECT id FROM message_drafts WHERE COALESCE(source_thread_id, 'draft:' || id) = ?
+                    ))
+                  )
+                ORDER BY ml.updated_at DESC
+                """,
+                (thread_id, thread_id, thread_id),
+            ).fetchall()
+            return [str(row["id"]) for row in rows]
+
+    def update_mutation_state(
+        self,
+        conn: sqlite3.Connection,
+        mutation_id: str,
+        *,
+        state: str,
+        error_message: str | None,
+        updated_at: str,
+        retry_count: int | None = None,
+        last_attempt_at: str | None = None,
+        next_attempt_at: str | None = None,
+    ) -> None:
+        """Update the replay state and error metadata for one mutation."""
+        conn.execute(
+            """
+            UPDATE mutation_log
+            SET state = ?,
+                error_message = ?,
+                updated_at = ?,
+                retry_count = COALESCE(?, retry_count),
+                last_attempt_at = COALESCE(?, last_attempt_at),
+                next_attempt_at = ?
+            WHERE id = ?
+            """,
+            (
+                state,
+                error_message,
+                updated_at,
+                retry_count,
+                last_attempt_at,
+                next_attempt_at,
+                mutation_id,
+            ),
+        )
+
+    def get_message_mutation_summary(self, message_id: str) -> dict:
+        """Return pending and failed mutation counts for one message."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    SUM(CASE WHEN state IN ('pending_local', 'ready_for_sync', 'in_flight') THEN 1 ELSE 0 END) AS pending_count,
+                    SUM(CASE WHEN state = 'failed' THEN 1 ELSE 0 END) AS failed_count,
+                    SUM(CASE WHEN state = 'blocked' THEN 1 ELSE 0 END) AS blocked_count,
+                    MAX(CASE WHEN state = 'failed' THEN 'failed' WHEN state = 'blocked' THEN 'blocked' WHEN state IN ('pending_local', 'ready_for_sync', 'in_flight') THEN state ELSE '' END) AS state
+                FROM mutation_log
+                WHERE target_kind = 'message'
+                  AND target_id = ?
+                """,
+                (message_id,),
+            ).fetchone()
+            return {
+                "pending_count": int(row["pending_count"] or 0)
+                if row is not None
+                else 0,
+                "failed_count": int(row["failed_count"] or 0) if row is not None else 0,
+                "blocked_count": int(row["blocked_count"] or 0)
+                if row is not None
+                else 0,
+                "state": str(row["state"] or "") if row is not None else "",
+            }
+
+    def get_thread_mutation_summary(self, thread_id: str) -> dict:
+        """Return pending and failed mutation counts for one thread context."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                """
+                WITH MessageScoped AS (
+                    SELECT id
+                    FROM messages
+                    WHERE thread_id = ?
+                )
+                SELECT
+                    SUM(
+                        CASE WHEN ml.state IN ('pending_local', 'ready_for_sync', 'in_flight') THEN 1 ELSE 0 END
+                    ) AS pending_count,
+                    SUM(CASE WHEN ml.state = 'failed' THEN 1 ELSE 0 END) AS failed_count,
+                    SUM(CASE WHEN ml.state = 'blocked' THEN 1 ELSE 0 END) AS blocked_count,
+                    MAX(CASE WHEN ml.state = 'failed' THEN 'failed' WHEN ml.state = 'blocked' THEN 'blocked' WHEN ml.state IN ('pending_local', 'ready_for_sync', 'in_flight') THEN ml.state ELSE '' END) AS state
+                FROM mutation_log ml
+                WHERE (ml.target_kind = 'thread' AND ml.target_id = ?)
+                   OR (ml.target_kind = 'message' AND ml.target_id IN (SELECT id FROM MessageScoped))
+                   OR (ml.target_kind = 'draft' AND ml.target_id IN (
+                        SELECT id FROM message_drafts WHERE COALESCE(source_thread_id, 'draft:' || id) = ?
+                   ))
+                """,
+                (thread_id, thread_id, thread_id),
+            ).fetchone()
+            return {
+                "pending_count": int(row["pending_count"] or 0)
+                if row is not None
+                else 0,
+                "failed_count": int(row["failed_count"] or 0) if row is not None else 0,
+                "blocked_count": int(row["blocked_count"] or 0)
+                if row is not None
+                else 0,
+                "state": str(row["state"] or "") if row is not None else "",
+            }
 
     def get_message(self, message_id: str) -> Optional[dict]:
         """Return one message by ID joined with sender contact name."""
@@ -250,31 +516,51 @@ class DatabaseRepository:
         self, label_id: str, limit: int = 50, offset: int = 0
     ) -> List[dict]:
         """Return latest thread messages for a label with thread counts."""
-        if label_id.upper() == "DRAFT":
+        normalized_label = label_id.upper()
+        if normalized_label == "DRAFT":
             return self._get_draft_threads(limit=limit, offset=offset)
+        if normalized_label == "OUTBOX":
+            return self._get_outbox_threads(limit=limit, offset=offset)
+
+        visibility_sql, visibility_params = (
+            DatabaseRepository._message_visibility_clause(alias="m", label_id=label_id)
+        )
+        thread_count_sql, thread_count_params = (
+            DatabaseRepository._thread_view_visibility_clause(
+                alias="m", label_id=label_id
+            )
+        )
 
         with self.get_connection() as conn:
             cursor = conn.execute(
-                """
+                f"""
                 WITH LatestMessages AS (
                     SELECT 
                         m.*,
                         COALESCE(NULLIF(c.name, ''), m.sender) as sender_display,
                         ROW_NUMBER() OVER (PARTITION BY m.thread_id ORDER BY m.timestamp DESC) as rank
                     FROM messages m
-                    JOIN message_labels ml ON m.id = ml.message_id
                     LEFT JOIN contacts c ON m.sender_address = c.email
-                    WHERE ml.label_id = ?
+                    WHERE {visibility_sql}
                 ),
                 ThreadCounts AS (
-                    SELECT thread_id, COUNT(*) as thread_count
-                    FROM messages
+                    SELECT m.thread_id, COUNT(*) as thread_count
+                    FROM messages m
+                    WHERE {thread_count_sql}
                     GROUP BY thread_id
                 ),
                 DraftCounts AS (
                     SELECT source_thread_id AS thread_id, COUNT(*) AS draft_count
                     FROM message_drafts
                     WHERE source_thread_id IS NOT NULL
+                      AND state = 'editing'
+                    GROUP BY source_thread_id
+                ),
+                OutboxCounts AS (
+                    SELECT source_thread_id AS thread_id, COUNT(*) AS outbox_count
+                    FROM message_drafts
+                    WHERE source_thread_id IS NOT NULL
+                      AND state = 'queued_to_send'
                     GROUP BY source_thread_id
                 )
                 SELECT
@@ -282,16 +568,37 @@ class DatabaseRepository:
                     tc.thread_count,
                     COALESCE(dc.draft_count, 0) AS draft_count,
                     CASE WHEN COALESCE(dc.draft_count, 0) > 0 THEN 1 ELSE 0 END AS has_draft,
+                    COALESCE(oc.outbox_count, 0) AS outbox_count,
+                    CASE WHEN COALESCE(oc.outbox_count, 0) > 0 THEN 1 ELSE 0 END AS has_outbox,
+                    COALESCE(ms.pending_count, 0) AS mutation_pending_count,
+                    COALESCE(ms.failed_count, 0) AS mutation_failed_count,
+                    COALESCE(ms.blocked_count, 0) AS mutation_blocked_count,
+                    COALESCE(ms.state, '') AS mutation_state,
                     0 AS is_draft,
                     NULL AS draft_id
                 FROM LatestMessages lm
                 JOIN ThreadCounts tc ON lm.thread_id = tc.thread_id
                 LEFT JOIN DraftCounts dc ON lm.thread_id = dc.thread_id
+                LEFT JOIN OutboxCounts oc ON lm.thread_id = oc.thread_id
+                LEFT JOIN (
+                    WITH MessageScoped AS (
+                        SELECT thread_id, id FROM messages
+                    )
+                    SELECT
+                        ms.thread_id,
+                        SUM(CASE WHEN ml.state IN ('pending_local', 'ready_for_sync', 'in_flight') THEN 1 ELSE 0 END) AS pending_count,
+                        SUM(CASE WHEN ml.state = 'failed' THEN 1 ELSE 0 END) AS failed_count,
+                        SUM(CASE WHEN ml.state = 'blocked' THEN 1 ELSE 0 END) AS blocked_count,
+                        MAX(CASE WHEN ml.state = 'failed' THEN 'failed' WHEN ml.state = 'blocked' THEN 'blocked' WHEN ml.state IN ('pending_local', 'ready_for_sync', 'in_flight') THEN ml.state ELSE '' END) AS state
+                    FROM mutation_log ml
+                    JOIN MessageScoped ms ON ml.target_kind = 'message' AND ml.target_id = ms.id
+                    GROUP BY ms.thread_id
+                ) ms ON lm.thread_id = ms.thread_id
                 WHERE lm.rank = 1
                 ORDER BY lm.timestamp DESC
                 LIMIT ? OFFSET ?
                 """,
-                (label_id, limit, offset),
+                (*visibility_params, *thread_count_params, limit, offset),
             )
             return [dict(row) for row in cursor.fetchall()]
 
@@ -323,6 +630,7 @@ class DatabaseRepository:
                         created_at,
                         updated_at
                     FROM message_drafts
+                    WHERE state = 'editing'
                 ),
                 DraftLatest AS (
                     SELECT
@@ -360,6 +668,12 @@ class DatabaseRepository:
                     COALESCE(mtc.message_count, 0) + dc.draft_count AS thread_count,
                     dc.draft_count AS draft_count,
                     1 AS has_draft,
+                    0 AS outbox_count,
+                    0 AS has_outbox,
+                    0 AS mutation_pending_count,
+                    0 AS mutation_failed_count,
+                    0 AS mutation_blocked_count,
+                    '' AS mutation_state,
                     1 AS is_draft,
                     dl.draft_id AS draft_id
                 FROM DraftLatest dl
@@ -373,18 +687,106 @@ class DatabaseRepository:
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def get_thread_messages(self, thread_id: str) -> List[dict]:
-        """Return all messages for a thread ordered by most recent first."""
+    def _get_outbox_threads(self, limit: int = 50, offset: int = 0) -> List[dict]:
+        """Return thread rows derived from drafts queued for send."""
         with self.get_connection() as conn:
             cursor = conn.execute(
                 """
+                WITH QueuedResolved AS (
+                    SELECT
+                        id AS draft_id,
+                        COALESCE(source_thread_id, 'draft:' || id) AS resolved_thread_id,
+                        mode,
+                        to_addresses,
+                        cc_addresses,
+                        bcc_addresses,
+                        subject,
+                        body,
+                        created_at,
+                        updated_at,
+                        queued_at
+                    FROM message_drafts
+                    WHERE state = 'queued_to_send'
+                ),
+                QueuedLatest AS (
+                    SELECT
+                        qr.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY resolved_thread_id
+                            ORDER BY COALESCE(queued_at, updated_at) DESC
+                        ) AS rank
+                    FROM QueuedResolved qr
+                ),
+                QueuedCounts AS (
+                    SELECT resolved_thread_id, COUNT(*) AS queued_count
+                    FROM QueuedResolved
+                    GROUP BY resolved_thread_id
+                ),
+                MessageThreadCounts AS (
+                    SELECT thread_id, COUNT(*) AS message_count
+                    FROM messages
+                    GROUP BY thread_id
+                )
+                SELECT
+                    ql.resolved_thread_id AS thread_id,
+                    COALESCE(NULLIF(ql.subject, ''), '(Queued)') AS subject,
+                    'You' AS sender,
+                    '' AS sender_address,
+                    'You' AS sender_display,
+                    ql.to_addresses AS recipient_to,
+                    ql.to_addresses AS recipient_to_addresses,
+                    ql.cc_addresses AS recipient_cc,
+                    ql.cc_addresses AS recipient_cc_addresses,
+                    ql.bcc_addresses AS recipient_bcc,
+                    ql.bcc_addresses AS recipient_bcc_addresses,
+                    SUBSTR(REPLACE(COALESCE(ql.body, ''), CHAR(10), ' '), 1, 120) AS snippet,
+                    ql.body AS body,
+                    COALESCE(ql.queued_at, ql.updated_at) AS timestamp,
+                    1 AS is_read,
+                    0 AS has_attachments,
+                    COALESCE(mtc.message_count, 0) + qc.queued_count AS thread_count,
+                    0 AS draft_count,
+                    0 AS has_draft,
+                    qc.queued_count AS outbox_count,
+                    1 AS has_outbox,
+                    qc.queued_count AS mutation_pending_count,
+                    0 AS mutation_failed_count,
+                    0 AS mutation_blocked_count,
+                    'ready_for_sync' AS mutation_state,
+                    1 AS is_draft,
+                    ql.draft_id AS draft_id,
+                    1 AS is_outbox
+                FROM QueuedLatest ql
+                JOIN QueuedCounts qc ON ql.resolved_thread_id = qc.resolved_thread_id
+                LEFT JOIN MessageThreadCounts mtc ON ql.resolved_thread_id = mtc.thread_id
+                WHERE ql.rank = 1
+                ORDER BY COALESCE(ql.queued_at, ql.updated_at) DESC
+                LIMIT ? OFFSET ?
+                """,
+                (limit, offset),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_thread_messages(
+        self, thread_id: str, label_id: str | None = None
+    ) -> List[dict]:
+        """Return thread cards using thread-view visibility rules for the active view."""
+        visibility_sql, visibility_params = (
+            DatabaseRepository._thread_view_visibility_clause(
+                alias="m", label_id=label_id
+            )
+        )
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                f"""
                 SELECT m.*, c_sender.name as sender_name
                 FROM messages m
                 LEFT JOIN contacts c_sender ON m.sender_address = c_sender.email
                 WHERE m.thread_id = ?
+                  AND {visibility_sql}
                 ORDER BY m.timestamp DESC
                 """,
-                (thread_id,),
+                (thread_id, *visibility_params),
             )
             messages = [dict(row) for row in cursor.fetchall()]
 
@@ -393,6 +795,7 @@ class DatabaseRepository:
                 SELECT *
                 FROM message_drafts
                 WHERE COALESCE(source_thread_id, 'draft:' || id) = ?
+                  AND state IN ('editing', 'queued_to_send')
                 ORDER BY updated_at DESC
                 """,
                 (thread_id,),
@@ -429,6 +832,10 @@ class DatabaseRepository:
                     "is_read": 1,
                     "has_attachments": 0,
                     "is_draft": 1,
+                    "draft_state": draft.get("state") or "editing",
+                    "is_outbox": 1
+                    if str(draft.get("state") or "") == "queued_to_send"
+                    else 0,
                     "draft_id": draft.get("id"),
                     "source_message_id": draft.get("source_message_id"),
                 }
@@ -467,6 +874,88 @@ class DatabaseRepository:
             return 0.0
         return to_timestamp(raw)
 
+    @staticmethod
+    def _message_visibility_clause(
+        alias: str, label_id: str | None
+    ) -> tuple[str, list[str]]:
+        """Return SQL and params for current-view message visibility rules."""
+        normalized = str(label_id or "ALL").strip().upper() or "ALL"
+        spam_check = (
+            f"EXISTS (SELECT 1 FROM message_labels spam WHERE spam.message_id = {alias}.id "
+            "AND UPPER(spam.label_id) = 'SPAM')"
+        )
+        trash_check = (
+            f"EXISTS (SELECT 1 FROM message_labels trash WHERE trash.message_id = {alias}.id "
+            "AND UPPER(trash.label_id) = 'TRASH')"
+        )
+
+        if normalized == "SPAM":
+            return spam_check, []
+        if normalized == "TRASH":
+            return trash_check, []
+
+        hidden_clause = f"NOT {spam_check} AND NOT {trash_check}"
+        if normalized == "ALL":
+            return hidden_clause, []
+
+        return (
+            f"EXISTS (SELECT 1 FROM message_labels scoped WHERE scoped.message_id = {alias}.id "
+            "AND UPPER(scoped.label_id) = UPPER(?)) AND "
+            f"{hidden_clause}",
+            [label_id or normalized],
+        )
+
+    @staticmethod
+    def _thread_view_visibility_clause(
+        alias: str, label_id: str | None
+    ) -> tuple[str, list[str]]:
+        """Return visibility SQL for thread viewer surfaces.
+
+        Thread view shows the whole conversation by default, while still honoring
+        exclusive mailbox views such as Trash and Spam.
+        """
+        normalized = str(label_id or "ALL").strip().upper() or "ALL"
+        spam_check = (
+            f"EXISTS (SELECT 1 FROM message_labels spam WHERE spam.message_id = {alias}.id "
+            "AND UPPER(spam.label_id) = 'SPAM')"
+        )
+        trash_check = (
+            f"EXISTS (SELECT 1 FROM message_labels trash WHERE trash.message_id = {alias}.id "
+            "AND UPPER(trash.label_id) = 'TRASH')"
+        )
+
+        if normalized == "SPAM":
+            return spam_check, []
+        if normalized == "TRASH":
+            return trash_check, []
+        return f"NOT {spam_check} AND NOT {trash_check}", []
+
+    @staticmethod
+    def _normalize_label_row(row: dict) -> dict:
+        """Return one label row with human-friendly system label naming."""
+        normalized = dict(row)
+        label_id = str(normalized.get("id") or "").upper()
+        raw_name = str(normalized.get("name") or "")
+        system_names = {
+            "INBOX": "Inbox",
+            "SENT": "Sent",
+            "STARRED": "Starred",
+            "IMPORTANT": "Important",
+            "SPAM": "Spam",
+            "TRASH": "Bin",
+            "DRAFT": "Drafts",
+            "OUTBOX": "Outbox",
+            "UNREAD": "Unread",
+            "CATEGORY_PERSONAL": "Personal",
+            "CATEGORY_SOCIAL": "Social",
+            "CATEGORY_UPDATES": "Updates",
+            "CATEGORY_FORUMS": "Forums",
+            "CATEGORY_PROMOTIONS": "Promotions",
+        }
+        if label_id in system_names and raw_name.strip().upper() == label_id:
+            normalized["name"] = system_names[label_id]
+        return normalized
+
     def get_labels(self) -> List[dict]:
         """Return all labels from local storage."""
         with self.get_connection() as conn:
@@ -484,7 +973,10 @@ class DatabaseRepository:
                 ORDER BY type ASC, name ASC
                 """
             )
-            return [dict(row) for row in cursor.fetchall()]
+            return [
+                DatabaseRepository._normalize_label_row(dict(row))
+                for row in cursor.fetchall()
+            ]
 
     def get_label(self, label_id: str) -> Optional[dict]:
         """Return one label row by identifier."""
@@ -504,7 +996,7 @@ class DatabaseRepository:
                 """,
                 (label_id,),
             ).fetchone()
-            return dict(row) if row else None
+            return DatabaseRepository._normalize_label_row(dict(row)) if row else None
 
     def get_labels_with_counts(self) -> List[dict]:
         """Return labels with unread message counts."""
@@ -513,6 +1005,11 @@ class DatabaseRepository:
                 """
                 WITH DraftTotal AS (
                     SELECT COUNT(*) AS total_drafts FROM message_drafts
+                    WHERE state = 'editing'
+                ),
+                OutboxTotal AS (
+                    SELECT COUNT(*) AS total_outbox FROM message_drafts
+                    WHERE state = 'queued_to_send'
                 )
                 SELECT
                     l.id,
@@ -524,6 +1021,7 @@ class DatabaseRepository:
                     l.text_color,
                     CASE
                         WHEN UPPER(l.id) = 'DRAFT' OR UPPER(l.name) LIKE 'DRAFT%' THEN (SELECT total_drafts FROM DraftTotal)
+                        WHEN UPPER(l.id) = 'OUTBOX' OR UPPER(l.name) LIKE 'OUTBOX%' THEN (SELECT total_outbox FROM OutboxTotal)
                         ELSE COUNT(m.id)
                     END as unread_count
                 FROM labels l
@@ -533,13 +1031,24 @@ class DatabaseRepository:
                 ORDER BY l.type ASC, l.name ASC
                 """
             )
-            return [dict(row) for row in cursor.fetchall()]
+            return [
+                DatabaseRepository._normalize_label_row(dict(row))
+                for row in cursor.fetchall()
+            ]
 
     def get_total_local_draft_count(self) -> int:
         """Return total count of locally persisted draft messages."""
         with self.get_connection() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) AS total FROM message_drafts"
+                "SELECT COUNT(*) AS total FROM message_drafts WHERE state = 'editing'"
+            ).fetchone()
+            return int(row["total"]) if row is not None else 0
+
+    def get_total_outbox_count(self) -> int:
+        """Return total count of drafts queued for local send."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS total FROM message_drafts WHERE state = 'queued_to_send'"
             ).fetchone()
             return int(row["total"]) if row is not None else 0
 
@@ -551,6 +1060,21 @@ class DatabaseRepository:
                 SELECT COUNT(*) AS total
                 FROM message_drafts
                 WHERE COALESCE(source_thread_id, 'draft:' || id) = ?
+                  AND state = 'editing'
+                """,
+                (thread_id,),
+            ).fetchone()
+            return int(row["total"]) if row is not None else 0
+
+    def get_thread_outbox_count(self, thread_id: str) -> int:
+        """Return queued-send count associated with the provided thread id."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM message_drafts
+                WHERE COALESCE(source_thread_id, 'draft:' || id) = ?
+                  AND state = 'queued_to_send'
                 """,
                 (thread_id,),
             ).fetchone()
@@ -623,8 +1147,8 @@ class DatabaseRepository:
         conn.execute(
             """
             INSERT OR REPLACE INTO message_drafts
-            (id, mode, to_addresses, cc_addresses, bcc_addresses, subject, body, source_message_id, source_thread_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, mode, to_addresses, cc_addresses, bcc_addresses, subject, body, source_message_id, source_thread_id, state, queued_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 draft.id,
@@ -636,8 +1160,68 @@ class DatabaseRepository:
                 draft.body,
                 draft.source_message_id,
                 draft.source_thread_id,
+                draft.state,
+                draft.queued_at.isoformat() if draft.queued_at is not None else None,
                 draft.created_at.isoformat(),
                 draft.updated_at.isoformat(),
+            ),
+        )
+
+    def append_mutation(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        mutation_id: str,
+        account_id: str,
+        provider_key: str,
+        target_kind: str,
+        target_id: str,
+        action_type: str,
+        payload_json: str,
+        state: str,
+        created_at: str,
+        updated_at: str,
+        error_message: str | None = None,
+        retry_count: int = 0,
+        last_attempt_at: str | None = None,
+        next_attempt_at: str | None = None,
+    ) -> None:
+        """Persist one local-first mutation intent."""
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO mutation_log (
+                id,
+                account_id,
+                provider_key,
+                target_kind,
+                target_id,
+                action_type,
+                payload_json,
+                state,
+                error_message,
+                retry_count,
+                last_attempt_at,
+                next_attempt_at,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                mutation_id,
+                account_id,
+                provider_key,
+                target_kind,
+                target_id,
+                action_type,
+                payload_json,
+                state,
+                error_message,
+                retry_count,
+                last_attempt_at,
+                next_attempt_at,
+                created_at,
+                updated_at,
             ),
         )
 
@@ -682,6 +1266,88 @@ class DatabaseRepository:
             insert_sql = "INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES (?, ?)"
             insert_params = [(message_id, label_id) for label_id in added]
             conn.executemany(insert_sql, insert_params)
+
+    def replace_labels(
+        self, conn: sqlite3.Connection, message_id: str, label_ids: List[str]
+    ) -> None:
+        """Replace all labels for one message with the provided set."""
+        conn.execute("DELETE FROM message_labels WHERE message_id = ?", (message_id,))
+        self.update_labels(conn, message_id, label_ids, [])
+
+    def set_message_read_state(
+        self, conn: sqlite3.Connection, message_id: str, is_read: bool
+    ) -> None:
+        """Update the cached read state for one message."""
+        conn.execute(
+            "UPDATE messages SET is_read = ? WHERE id = ?",
+            (1 if is_read else 0, message_id),
+        )
+
+    def list_message_label_ids(self, message_id: str) -> List[str]:
+        """Return label ids currently associated with one message."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT label_id FROM message_labels WHERE message_id = ? ORDER BY label_id ASC",
+                (message_id,),
+            ).fetchall()
+            return [str(row["label_id"]) for row in rows]
+
+    def list_message_labels(self, message_id: str) -> List[dict]:
+        """Return detailed label rows for one message."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT l.*
+                FROM labels l
+                JOIN message_labels ml ON ml.label_id = l.id
+                WHERE ml.message_id = ?
+                ORDER BY l.type ASC, l.name ASC
+                """,
+                (message_id,),
+            ).fetchall()
+            return [DatabaseRepository._normalize_label_row(dict(row)) for row in rows]
+
+    def list_thread_labels(self, thread_id: str) -> List[dict]:
+        """Return union label rows for all provider messages in one thread."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT l.*
+                FROM labels l
+                JOIN message_labels ml ON ml.label_id = l.id
+                JOIN messages m ON m.id = ml.message_id
+                WHERE m.thread_id = ?
+                ORDER BY l.type ASC, l.name ASC
+                """,
+                (thread_id,),
+            ).fetchall()
+            labels = [
+                DatabaseRepository._normalize_label_row(dict(row)) for row in rows
+            ]
+
+        label_ids = {str(label.get("id") or "") for label in labels}
+        if self.get_thread_draft_count(thread_id) > 0 and "DRAFT" not in label_ids:
+            draft_label = self.get_label("DRAFT")
+            if draft_label is not None:
+                labels.append(draft_label)
+        if self.get_thread_outbox_count(thread_id) > 0 and "OUTBOX" not in label_ids:
+            outbox_label = self.get_label("OUTBOX")
+            if outbox_label is not None:
+                labels.append(outbox_label)
+        return [
+            label
+            for label in labels
+            if str(label.get("id") or "").upper() not in {"UNREAD"}
+        ]
+
+    def list_thread_message_ids(self, thread_id: str) -> List[str]:
+        """Return provider message ids for one thread."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT id FROM messages WHERE thread_id = ? ORDER BY timestamp DESC",
+                (thread_id,),
+            ).fetchall()
+            return [str(row["id"]) for row in rows]
 
     def remove_message(self, conn: sqlite3.Connection, message_id: str) -> None:
         """Delete a message row (and cascading associations)."""
@@ -739,10 +1405,11 @@ class DatabaseRepository:
         if valid_label_ids:
             placeholders = ", ".join(["?"] * len(valid_label_ids))
             conn.execute(
-                f"DELETE FROM labels WHERE id NOT IN ({placeholders})", valid_label_ids
+                f"DELETE FROM labels WHERE id NOT IN ({placeholders}) AND type != 'virtual'",
+                valid_label_ids,
             )
         else:
-            conn.execute("DELETE FROM labels")
+            conn.execute("DELETE FROM labels WHERE type != 'virtual'")
 
 
 db = DatabaseRepository()

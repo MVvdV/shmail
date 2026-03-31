@@ -48,6 +48,7 @@ class MessageDraftService:
             body=body,
             source_message_id=source_message_id,
             source_thread_id=source_thread_id,
+            state="editing",
             created_at=now,
             updated_at=now,
         )
@@ -73,6 +74,47 @@ class MessageDraftService:
         with self.repository.transaction() as conn:
             self.repository.remove_message_draft(conn, draft_id)
 
+    def queue_draft_for_send(self, draft: MessageDraft) -> MessageDraft:
+        """Freeze one draft into a queued-send state without provider delivery."""
+        queued_at = now_utc()
+        queued = draft.model_copy(
+            update={
+                "state": "queued_to_send",
+                "queued_at": queued_at,
+                "updated_at": queued_at,
+            }
+        )
+        with self.repository.transaction() as conn:
+            self.repository.upsert_message_draft(conn, queued)
+        return queued
+
+    def reopen_queued_draft(self, draft_id: str) -> MessageDraft | None:
+        """Return a queued draft to editable state for recovery flows."""
+        draft = self.get_draft(draft_id)
+        if draft is None:
+            return None
+        reopened = draft.model_copy(
+            update={"state": "editing", "queued_at": None, "updated_at": now_utc()}
+        )
+        with self.repository.transaction() as conn:
+            self.repository.upsert_message_draft(conn, reopened)
+        return reopened
+
+    def cancel_queued_send(self, draft_id: str) -> MessageDraft | None:
+        """Alias recovery flow for queued sends back into editable drafts."""
+        return self.reopen_queued_draft(draft_id)
+
+    def cancel_queued_sends_in_thread(self, thread_id: str) -> list[str]:
+        """Return all queued drafts in one thread back to editable state."""
+        restored_ids: list[str] = []
+        for draft_id in self.repository.list_thread_draft_ids(
+            thread_id, state="queued_to_send"
+        ):
+            restored = self.reopen_queued_draft(draft_id)
+            if restored is not None:
+                restored_ids.append(restored.id)
+        return restored_ids
+
     @staticmethod
     def _row_to_message_draft(row: dict) -> MessageDraft:
         """Convert a DB row into a MessageDraft model instance."""
@@ -81,6 +123,12 @@ class MessageDraftService:
         now = now_utc()
         created_at = parse_utc_datetime(created_raw, default=now)
         updated_at = parse_utc_datetime(updated_raw, default=created_at)
+        queued_raw = str(row.get("queued_at") or "")
+        queued_at = (
+            parse_utc_datetime(queued_raw, default=updated_at)
+            if queued_raw.strip()
+            else None
+        )
 
         return MessageDraft(
             id=str(row.get("id") or ""),
@@ -100,6 +148,8 @@ class MessageDraftService:
                 if row.get("source_thread_id") is not None
                 else None
             ),
+            state=str(row.get("state") or "editing"),
+            queued_at=queued_at,
             created_at=created_at,
             updated_at=updated_at,
         )

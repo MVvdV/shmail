@@ -56,6 +56,10 @@ class SyncService:
             self._gmail = GmailService(creds)
         return self._gmail
 
+    def reset_clients(self) -> None:
+        """Drop cached provider clients so the next operation rebuilds them."""
+        self._gmail = None
+
     def _update_status(self, message: str, progress: Optional[float] = None) -> None:
         """Log and publish sync progress updates."""
         logger.info(message)

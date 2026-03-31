@@ -15,6 +15,10 @@ class ThreadQueryService:
         self, label_id: str, limit: int = 50, offset: int = 0
     ) -> list[dict]:
         """Return thread rows for one label."""
-        return self.repository.get_threads(
+        threads = self.repository.get_threads(
             label_id=label_id, limit=limit, offset=offset
         )
+        for thread in threads:
+            thread_id = str(thread.get("thread_id") or "")
+            thread["thread_labels"] = self.repository.list_thread_labels(thread_id)
+        return threads

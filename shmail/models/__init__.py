@@ -129,5 +129,26 @@ class MessageDraft(BaseModel):
     body: str = ""
     source_message_id: Optional[str] = None
     source_thread_id: Optional[str] = None
+    state: str = "editing"
+    queued_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class MutationRecord(BaseModel):
+    """Represents one provider-agnostic local mutation intent."""
+
+    id: str
+    account_id: str
+    provider_key: str
+    target_kind: str
+    target_id: str
+    action_type: str
+    payload_json: str = "{}"
+    state: str = "pending_local"
+    error_message: Optional[str] = None
+    retry_count: int = 0
+    last_attempt_at: Optional[datetime] = None
+    next_attempt_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime

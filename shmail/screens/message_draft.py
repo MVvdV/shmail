@@ -24,6 +24,7 @@ from shmail.config import settings
 from shmail.models import MessageDraft
 from shmail.services.draft_preview import to_rendered_markdown_preview
 from shmail.services.message_draft import MessageDraftService
+from shmail.services.outbound_message import OutboundMessageService
 from shmail.services.parser import MessageParser
 from shmail.widgets.shortcuts import (
     ShortcutFooter,
@@ -54,6 +55,7 @@ class MessageDraftCloseUpdate:
     did_change: bool
     draft_id: str | None
     source_thread_id: str | None
+    draft_state: str | None = None
 
 
 class DraftDiscardActionItem(ListItem):
@@ -61,6 +63,7 @@ class DraftDiscardActionItem(ListItem):
 
     def __init__(self, action_value: str, label: str) -> None:
         super().__init__()
+        self.add_class("message-draft-discard-action")
         self.action_value = action_value
         self.label = label
 
@@ -85,7 +88,7 @@ class MessageDraftDiscardConfirmScreen(ModalScreen[str | None]):
     ]
 
     def __init__(self, *, can_delete: bool) -> None:
-        super().__init__()
+        super().__init__(id="message-draft-discard-screen")
         self.can_delete = can_delete
 
     def compose(self) -> ComposeResult:
@@ -194,12 +197,20 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
             show=False,
         ),
         Binding("ctrl+s", "save_draft", "Save Draft", show=False),
+        Binding(settings.keybindings.send, "send_draft", "Send Draft", show=False),
+        Binding(
+            settings.keybindings.delete_draft,
+            "cancel_queued_send",
+            "Cancel Queued Send",
+            show=False,
+        ),
     ]
 
     def __init__(self, seed: MessageDraftSeed | None = None) -> None:
-        super().__init__(id="message-draft-screen")
+        super().__init__(id="message-draft-modal-screen")
         self.seed = seed or MessageDraftSeed()
         self._draft_service: MessageDraftService | None = None
+        self._outbound_service: OutboundMessageService | None = None
         self._draft: MessageDraft | None = None
         self._opened_draft_snapshot: MessageDraft | None = None
         self._persisted_draft_snapshot: MessageDraft | None = None
@@ -247,6 +258,7 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
             return
 
         self._draft_service = MessageDraftService(repository)
+        self._outbound_service = OutboundMessageService(repository)
         if self.seed.draft_id:
             existing = self._draft_service.get_draft(self.seed.draft_id)
             if existing is not None:
@@ -267,6 +279,7 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
         self._opened_draft_snapshot = self._draft.model_copy(deep=True)
         self._persisted_draft_snapshot = self._draft.model_copy(deep=True)
         self._hydrate_fields_from_draft(self._draft)
+        self._apply_editability()
         self._draft_dirty = False
         self._dirty_since_open = False
 
@@ -321,6 +334,68 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
         """Persist draft immediately and confirm save state to the user."""
         self._persist_now(notify_user=True)
 
+    def action_send_draft(self) -> None:
+        """Queue the current draft for send without provider replay."""
+        if self._draft_service is None or self._outbound_service is None:
+            return
+        payload = self._collect_draft_payload()
+        if payload is None:
+            return
+        if payload.state == "queued_to_send":
+            notify = getattr(self.app, "notify", None)
+            if callable(notify):
+                notify("This message is already queued in Outbox.", severity="warning")
+            return
+        self._draft = self._draft_service.save_draft(payload)
+        account_id = str(getattr(self.app, "email", "") or "")
+        provider_key = str(getattr(self.app, "provider_key", "gmail") or "gmail")
+        result = self._outbound_service.queue_send(
+            account_id=account_id,
+            provider_key=provider_key,
+            draft=self._draft,
+        )
+        self._draft = self._draft_service.get_draft(result.draft_id)
+        self._persisted_draft_snapshot = (
+            self._draft.model_copy(deep=True) if self._draft is not None else None
+        )
+        self._opened_draft_snapshot = self._persisted_draft_snapshot
+        self._draft_dirty = False
+        self._dirty_since_open = False
+        notify = getattr(self.app, "notify", None)
+        if callable(notify):
+            notify("Message queued locally in Outbox.", severity="information")
+        self.dismiss(
+            MessageDraftCloseUpdate(
+                did_change=True,
+                draft_id=result.draft_id,
+                source_thread_id=result.source_thread_id,
+                draft_state="queued_to_send",
+            )
+        )
+
+    def action_cancel_queued_send(self) -> None:
+        """Return a queued draft back to editable local-draft state."""
+        if self._draft_service is None or self._draft is None:
+            return
+        if self._draft.state != "queued_to_send":
+            return
+        restored = self._draft_service.cancel_queued_send(self._draft.id)
+        if restored is None:
+            return
+        self._draft = restored
+        self._opened_draft_snapshot = restored.model_copy(deep=True)
+        self._persisted_draft_snapshot = restored.model_copy(deep=True)
+        self._draft_dirty = False
+        self._dirty_since_open = False
+        self._hydrate_fields_from_draft(restored)
+        self._apply_editability()
+        self.query_one(MessageDraftFooter).update_shortcuts(self.get_shortcuts())
+        notify = getattr(self.app, "notify", None)
+        if callable(notify):
+            notify(
+                "Queued send cancelled; draft restored locally.", severity="information"
+            )
+
     def on_unmount(self) -> None:
         """Flush pending autosave and stop timers when screen unmounts."""
         self._stop_autosave_timer()
@@ -367,6 +442,13 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
         finally:
             self._suspend_change_tracking = False
 
+    def _apply_editability(self) -> None:
+        """Toggle compose field editability based on draft lifecycle state."""
+        is_editable = not (self._draft and self._draft.state == "queued_to_send")
+        for selector in ("#draft-to", "#draft-cc", "#draft-bcc", "#draft-subject"):
+            self.query_one(selector, Input).disabled = not is_editable
+        self.query_one("#message-draft-editor", TextArea).disabled = not is_editable
+
     def _collect_draft_payload(self) -> MessageDraft | None:
         """Build updated draft model from current widget field state."""
         if self._draft is None:
@@ -391,6 +473,8 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
         payload = self._collect_draft_payload()
         if payload is None:
             return
+        if payload.state == "queued_to_send":
+            return
         if not self._draft_dirty and not notify_user:
             return
         self._draft = self._draft_service.save_draft(payload)
@@ -410,6 +494,9 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
                 draft_for_update.source_thread_id
                 if draft_for_update is not None
                 else None
+            ),
+            draft_state=(
+                draft_for_update.state if draft_for_update is not None else None
             ),
         )
 
@@ -470,6 +557,9 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
                     if draft_for_update is not None
                     else None
                 ),
+                draft_state=(
+                    draft_for_update.state if draft_for_update is not None else None
+                ),
             )
         )
 
@@ -522,8 +612,28 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
 
     def get_shortcuts(self) -> list[tuple[str, str]]:
         """Return compose footer shortcut set for current draft workflow."""
+        if self._draft is not None and self._draft.state == "queued_to_send":
+            return [
+                (
+                    binding_choices_label(settings.keybindings.delete_draft, "X"),
+                    "Cancel Queue",
+                ),
+                (
+                    binding_choices_label(settings.keybindings.get_mail, "CTRL+G"),
+                    "Get Mail",
+                ),
+                (binding_choices_label(settings.keybindings.close, "Q/ESC"), "Close"),
+            ]
         return [
             ("CTRL+S", "Save"),
+            (
+                binding_choices_label(settings.keybindings.send, "CTRL+ENTER"),
+                "Queue Send",
+            ),
+            (
+                binding_choices_label(settings.keybindings.get_mail, "CTRL+G"),
+                "Get Mail",
+            ),
             (
                 binding_choices_label(
                     settings.keybindings.compose_preview_toggle, "F2"

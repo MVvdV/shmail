@@ -19,6 +19,7 @@ class LabelHeader(ListItem):
 
     def __init__(self, title: str):
         super().__init__(disabled=True)
+        self.add_class("labels-sidebar-section")
         self.title = title
 
     def on_mount(self) -> None:
@@ -39,6 +40,7 @@ class LabelItem(ListItem):
         background_color: str | None = None,
     ):
         super().__init__()
+        self.add_class("labels-sidebar-item")
         self.display_name = display_name
         self.label_id = label_id
         self.count = count
@@ -296,8 +298,10 @@ class LabelsSidebar(Vertical):
             "STARRED": "Starred",
             "SENT": "Sent",
             "DRAFT": "Drafts",
+            "OUTBOX": "Outbox",
         }
         cat_map = {
+            "CATEGORY_PERSONAL": "Personal",
             "CATEGORY_SOCIAL": "Social",
             "CATEGORY_UPDATES": "Updates",
             "CATEGORY_FORUMS": "Forums",

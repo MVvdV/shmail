@@ -70,3 +70,60 @@ def test_save_draft_updates_timestamp_and_body(test_db):
     assert loaded.body == "beta"
     assert loaded.created_at.tzinfo == timezone.utc
     assert loaded.updated_at.tzinfo == timezone.utc
+
+
+def test_cancel_queued_send_restores_editable_draft(test_db):
+    """Ensure queued drafts can be restored back into editable state."""
+    service = MessageDraftService(repository=test_db)
+    draft = service.resolve_or_create_draft(
+        mode="new",
+        to_addresses="alice@example.com",
+        cc_addresses="",
+        bcc_addresses="",
+        subject="Hello",
+        body="queued",
+        source_message_id=None,
+        source_thread_id="thread-queued",
+    )
+
+    queued = service.queue_draft_for_send(draft)
+    restored = service.cancel_queued_send(queued.id)
+
+    assert restored is not None
+    assert restored.state == "editing"
+    assert restored.queued_at is None
+    assert test_db.get_total_local_draft_count() == 1
+    assert test_db.get_total_outbox_count() == 0
+
+
+def test_cancel_queued_sends_in_thread_restores_all_thread_drafts(test_db):
+    """Ensure thread-level outbox cancel restores every queued draft in the thread."""
+    service = MessageDraftService(repository=test_db)
+    first = service.resolve_or_create_draft(
+        mode="reply",
+        to_addresses="alice@example.com",
+        cc_addresses="",
+        bcc_addresses="",
+        subject="One",
+        body="one",
+        source_message_id="m-one",
+        source_thread_id="thread-bulk",
+    )
+    second = service.resolve_or_create_draft(
+        mode="forward",
+        to_addresses="bob@example.com",
+        cc_addresses="",
+        bcc_addresses="",
+        subject="Two",
+        body="two",
+        source_message_id="m-two",
+        source_thread_id="thread-bulk",
+    )
+    service.queue_draft_for_send(first)
+    service.queue_draft_for_send(second)
+
+    restored_ids = service.cancel_queued_sends_in_thread("thread-bulk")
+
+    assert sorted(restored_ids) == sorted([first.id, second.id])
+    assert test_db.get_total_local_draft_count() == 2
+    assert test_db.get_total_outbox_count() == 0

@@ -4,11 +4,13 @@ import json
 import webbrowser
 from typing import TYPE_CHECKING, cast
 
+from rich.markup import escape
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.css.query import NoMatches
+from textual.dom import NoScreen
 from textual.events import Click
 from textual.message import Message
 from textual.reactive import reactive
@@ -47,6 +49,7 @@ class MessageItem(Vertical):
 
     def __init__(self, message_data: dict, **kwargs):
         super().__init__(**kwargs)
+        self.add_class("thread-message-card")
         self.message_data = message_data
         self.set_class(bool(self.message_data.get("is_draft")), "-draft")
         raw_body = str(self.message_data.get("body", "*No content*"))
@@ -78,6 +81,9 @@ class MessageItem(Vertical):
             yield Static(f"From: {sender}", classes="message-from", markup=False)
             yield Static(f"To: {recipient}", classes="message-to", markup=False)
             yield Static(self._format_date(), classes="message-date")
+            yield Static(
+                self._render_label_chips(), classes="message-label-chips", markup=True
+            )
 
         yield Static("", classes="message-interaction-bar", markup=False)
         md = Markdown(
@@ -334,19 +340,41 @@ class MessageItem(Vertical):
         reply_all_key = binding_choices_label(settings.keybindings.reply_all, "A")
         forward_key = binding_choices_label(settings.keybindings.forward, "F")
         delete_key = binding_choices_label(settings.keybindings.delete_draft, "X")
-        move_key = movement_pair_label(
+        labels_key = binding_choices_label(settings.keybindings.labels, "L")
+        trash_key = binding_choices_label(settings.keybindings.trash, "X")
+        move_label = binding_choices_label(settings.keybindings.move, "M")
+        retry_key = binding_choices_label(settings.keybindings.retry, "Ctrl+R")
+        get_mail_key = binding_choices_label(settings.keybindings.get_mail, "Ctrl+G")
+        try:
+            current_view = str(getattr(self.screen, "view_label_id", "") or "").upper()
+        except NoScreen:
+            current_view = ""
+        navigation_key = movement_pair_label(
             settings.keybindings.up, settings.keybindings.down
         )
         close_key = binding_choices_label(settings.keybindings.close, "Q/ESC")
+        restore_key = binding_choices_label(settings.keybindings.restore, "U")
         cycle_key = (
             f"{primary_binding_label(settings.keybindings.thread_cycle_forward, 'TAB')}/"
             f"{primary_binding_label(settings.keybindings.thread_cycle_backward, 'S+TAB')}"
         )
         if bool(self.message_data.get("is_draft")):
+            if str(self.message_data.get("draft_state") or "") == "queued_to_send":
+                return [
+                    (select_key, "View"),
+                    (delete_key, "Cancel Queue"),
+                    (retry_key, "Retry"),
+                    (get_mail_key, "Get Mail"),
+                    (navigation_key, "Navigate"),
+                    (cycle_key, "Cycle"),
+                    (close_key, "Close"),
+                ]
             return [
                 (select_key, "Resume"),
                 (delete_key, "Delete"),
-                (move_key, "Move"),
+                (retry_key, "Retry"),
+                (get_mail_key, "Get Mail"),
+                (navigation_key, "Navigate"),
                 (cycle_key, "Cycle"),
                 (close_key, "Close"),
             ]
@@ -357,24 +385,69 @@ class MessageItem(Vertical):
             else ("Collapse" if self.expanded else "Expand")
         )
         if self.expanded:
-            return [
+            shortcuts = [
                 (select_key, "Open" if enter_label == "Open Link" else enter_label),
                 (reply_key, "Reply"),
                 (reply_all_key, "All"),
                 (forward_key, "Fwd"),
-                (move_key, "Move"),
+                (labels_key, "Labels"),
+                (move_label, "Move"),
+                (trash_key, "Delete" if current_view == "TRASH" else "Trash"),
+                (retry_key, "Retry"),
+                (get_mail_key, "Get Mail"),
+                (navigation_key, "Navigate"),
                 (cycle_key, "Cycle"),
                 (close_key, "Close"),
             ]
-        return [
+            if current_view == "TRASH":
+                shortcuts.insert(7, (restore_key, "Restore"))
+            return shortcuts
+        shortcuts = [
             (select_key, enter_label),
             (reply_key, "Reply"),
             (reply_all_key, "All"),
             (forward_key, "Fwd"),
-            (move_key, "Move"),
+            (labels_key, "Labels"),
+            (move_label, "Move"),
+            (trash_key, "Delete" if current_view == "TRASH" else "Trash"),
+            (retry_key, "Retry"),
+            (get_mail_key, "Get Mail"),
+            (navigation_key, "Navigate"),
             (cycle_key, "Cycle"),
             (close_key, "Close"),
         ]
+        if current_view == "TRASH":
+            shortcuts.insert(7, (restore_key, "Restore"))
+        return shortcuts
+
+    def _render_label_chips(self) -> str:
+        """Render one compact text-only label strip."""
+        failed_count = int(self.message_data.get("mutation_failed_count") or 0)
+        blocked_count = int(self.message_data.get("mutation_blocked_count") or 0)
+        if str(self.message_data.get("draft_state") or "") == "queued_to_send":
+            return "[black on yellow] Outbox [/]"
+        labels = list(self.message_data.get("labels") or [])
+        chips = [
+            self._format_label_chip(label)
+            for label in labels
+            if str(label.get("id") or "").upper() not in {"UNREAD", "TRASH"}
+        ]
+        if failed_count > 0 or blocked_count > 0:
+            chips.insert(0, "[black on red] ! [/]")
+        return " ".join(chip for chip in chips if chip)
+
+    @staticmethod
+    def _format_label_chip(label: dict) -> str:
+        """Return one inline markup chip for a message label."""
+        name = str(label.get("name") or label.get("id") or "").strip()
+        if not name:
+            return ""
+        text = escape(name.split("/")[-1])
+        background = str(label.get("background_color") or "").strip()
+        foreground = str(label.get("text_color") or "").strip()
+        if background and foreground:
+            return f"[{foreground} on {background}] {text} [/]"
+        return f"[reverse] {text} [/]"
 
 
 class ThreadFooter(ShortcutFooter):
