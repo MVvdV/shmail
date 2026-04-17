@@ -25,9 +25,6 @@ class ThreadList(ListView):
         Binding(settings.keybindings.move, "move_thread", "Move", show=False),
         Binding(settings.keybindings.trash, "trash_thread", "Trash", show=False),
         Binding(settings.keybindings.restore, "restore_thread", "Restore", show=False),
-        Binding(
-            settings.keybindings.retry, "retry_thread_mutations", "Retry", show=False
-        ),
     ]
 
     def get_shortcuts(self) -> list[tuple[str, str]]:
@@ -41,26 +38,22 @@ class ThreadList(ListView):
                     "Cancel Queue",
                 ),
                 (
-                    binding_choices_label(settings.keybindings.retry, "Ctrl+R"),
-                    "Retry",
-                ),
-                (
-                    binding_choices_label(settings.keybindings.get_mail, "Ctrl+G"),
-                    "Get Mail",
+                    binding_choices_label(settings.keybindings.sync, "S"),
+                    "Sync",
                 ),
                 (
                     movement_pair_label(
                         settings.keybindings.up, settings.keybindings.down
                     ),
-                    "Navigate",
+                    "Nav",
                 ),
                 (
                     f"{binding_choices_label(settings.keybindings.first, 'G')}/{binding_choices_label(settings.keybindings.last, 'SHIFT+G')}",
-                    "Home/End",
+                    "Jump",
                 ),
                 (
-                    binding_choices_label(settings.keybindings.pane_prev, "TAB"),
-                    "Labels",
+                    binding_choices_label(settings.keybindings.pane_toggle, "Tab"),
+                    "Pane",
                 ),
             ]
         shortcuts = [
@@ -75,18 +68,17 @@ class ThreadList(ListView):
             ),
             (
                 movement_pair_label(settings.keybindings.up, settings.keybindings.down),
-                "Navigate",
+                "Nav",
             ),
-            (binding_choices_label(settings.keybindings.retry, "Ctrl+R"), "Retry"),
             (
-                binding_choices_label(settings.keybindings.get_mail, "Ctrl+G"),
-                "Get Mail",
+                binding_choices_label(settings.keybindings.sync, "S"),
+                "Sync",
             ),
             (
                 f"{binding_choices_label(settings.keybindings.first, 'G')}/{binding_choices_label(settings.keybindings.last, 'SHIFT+G')}",
-                "Home/End",
+                "Jump",
             ),
-            (binding_choices_label(settings.keybindings.pane_prev, "TAB"), "Labels"),
+            (binding_choices_label(settings.keybindings.pane_toggle, "Tab"), "Pane"),
         ]
         if current_label == "TRASH":
             shortcuts.insert(
@@ -243,10 +235,6 @@ class ThreadList(ListView):
     def action_restore_thread(self) -> None:
         """Request thread-scoped restore for the highlighted row."""
         self._post_mutation_request("restore")
-
-    def action_retry_thread_mutations(self) -> None:
-        """Request retry for failed or blocked thread-associated mutations."""
-        self._post_mutation_request("retry")
 
     def _post_mutation_request(self, action: str) -> None:
         """Post one thread mutation request for the highlighted row."""

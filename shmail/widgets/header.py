@@ -46,6 +46,7 @@ class AppHeader(Horizontal):
             allow_blank=False,
             compact=True,
             id="app-account-select",
+            classes="shmail-select-utility",
         )
 
     def on_mount(self) -> None:

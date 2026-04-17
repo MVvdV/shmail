@@ -10,6 +10,7 @@ from shmail.config import settings
 from .message_actions import LabelSelectionScreen, MoveSelectionScreen
 from .message_draft import MessageDraftCloseUpdate, MessageDraftScreen, MessageDraftSeed
 from shmail.services.message_draft import MessageDraftService
+from shmail.services.attachments import AttachmentService
 from shmail.widgets.shortcuts import resolve_shortcut_owner
 from shmail.widgets import MessageItem, ThreadFooter
 
@@ -26,6 +27,12 @@ class ThreadMessagesScreen(ModalScreen):
         Binding(settings.keybindings.reply_all, "reply_all", "Reply All", show=False),
         Binding(settings.keybindings.forward, "forward", "Forward", show=False),
         Binding(
+            settings.keybindings.attachment_download,
+            "download_attachment",
+            "Download Attachment",
+            show=False,
+        ),
+        Binding(
             settings.keybindings.delete_draft,
             "delete_draft",
             "Delete Draft",
@@ -36,7 +43,10 @@ class ThreadMessagesScreen(ModalScreen):
         Binding(settings.keybindings.trash, "trash_message", "Trash", show=False),
         Binding(settings.keybindings.restore, "restore_message", "Restore", show=False),
         Binding(
-            settings.keybindings.retry, "retry_message_mutations", "Retry", show=False
+            settings.keybindings.retry_send,
+            "retry_send",
+            "Retry Send",
+            show=False,
         ),
         Binding(settings.keybindings.down, "next_message", "Next Message", show=False),
         Binding(
@@ -72,7 +82,7 @@ class ThreadMessagesScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         """Yields a container for the conversation thread and a custom footer."""
-        with Vertical(id="thread-modal-container"):
+        with Vertical(id="thread-modal-container", classes="shmail-modal-panel"):
             yield ScrollableContainer(id="thread-stack")
             yield ThreadFooter(id="thread-footer")
 
@@ -191,10 +201,35 @@ class ThreadMessagesScreen(ModalScreen):
 
         current = self._resolve_focused_message_item()
         if current is None:
-            self._set_active_message(message_items[0], select_link_direction=direction)
+            self._set_active_message(
+                message_items[0], enter_internal_direction=direction
+            )
             return
 
-        if current.expanded and current.has_links():
+        if current.attachment_selector_has_focus():
+            if direction < 0:
+                current.focus()
+                self.watch_focused(current)
+                return
+            current.focus()
+            if current.has_links():
+                current.active_link_index = -1
+                current.step_link(1)
+                self.watch_focused(current)
+                return
+        elif current.expanded and current.active_link_index >= 0:
+            if current.step_link(direction):
+                self.watch_focused(current)
+                return
+            if direction < 0 and current.has_attachment_selector():
+                current.focus_attachment_selector(open_overlay=False)
+                self.watch_focused(self.focused)
+                return
+        elif direction > 0 and current.focus_attachment_selector(open_overlay=False):
+            self.watch_focused(self.focused)
+            return
+        elif current.expanded and current.has_links():
+            current.active_link_index = -1
             if current.step_link(direction):
                 self.watch_focused(current)
                 return
@@ -202,7 +237,7 @@ class ThreadMessagesScreen(ModalScreen):
         current_idx = message_items.index(current)
         target_idx = (current_idx + direction) % len(message_items)
         target = message_items[target_idx]
-        self._set_active_message(target, select_link_direction=direction)
+        self._set_active_message(target, enter_internal_direction=direction)
 
     def action_close(self) -> None:
         """Dismisses the modal conversation screen."""
@@ -356,25 +391,45 @@ class ThreadMessagesScreen(ModalScreen):
         )
         self._apply_message_mutation_result(result)
 
-    def action_retry_message_mutations(self) -> None:
-        """Retry failed or blocked mutations for the focused message."""
+    def action_retry_send(self) -> None:
+        """Retry one failed queued send for the focused outbox draft."""
         message_item = self._resolve_focused_message_item()
-        if message_item is None or bool(message_item.message_data.get("is_draft")):
+        if message_item is None or not bool(message_item.message_data.get("is_draft")):
             return
-        message_id = str(message_item.message_data.get("id") or "")
-        if not message_id:
+        if str(message_item.message_data.get("draft_state") or "") != "queued_to_send":
             return
-        mutation_ids = self.shmail_app.mutation_log.retry_message_mutations(message_id)
+        draft_id = str(message_item.message_data.get("draft_id") or "")
+        if not draft_id:
+            return
+        failed_count = int(message_item.message_data.get("mutation_failed_count") or 0)
+        blocked_count = int(
+            message_item.message_data.get("mutation_blocked_count") or 0
+        )
+        if failed_count <= 0 and blocked_count <= 0:
+            notify = getattr(self.app, "notify", None)
+            if callable(notify):
+                notify("No failed queued send to retry.", severity="warning")
+            return
+        mutation_ids = self.shmail_app.mutation_log.retry_draft_mutations(draft_id)
         if not mutation_ids:
             notify = getattr(self.app, "notify", None)
             if callable(notify):
-                notify(
-                    "No failed or blocked message mutations to retry.",
-                    severity="warning",
-                )
+                notify("No failed queued send to retry.", severity="warning")
             return
         self.shmail_app.replay_mutations(mutation_ids)
         self.reload_thread_if_matching(self.thread_id)
+
+    def action_download_attachment(self) -> None:
+        """Focus and open the inline attachment selector for the focused message."""
+        message_item = self._resolve_focused_message_item()
+        if message_item is None or bool(message_item.message_data.get("is_draft")):
+            return
+        if not message_item.focus_attachment_selector(open_overlay=True):
+            notify = getattr(self.app, "notify", None)
+            if callable(notify):
+                notify("No attachments available to download.", severity="warning")
+                return
+        self.watch_focused(self.focused)
 
     def _open_compose_from_focus(self, action: str | None) -> None:
         """Open or resume compose from the currently focused thread card."""
@@ -476,6 +531,54 @@ class ThreadMessagesScreen(ModalScreen):
                 severity="information",
             )
 
+    def _download_attachments(self, message_id: str, attachment_id: str | None) -> None:
+        """Download one or all attachments for the provided message."""
+        gmail_service = self._resolve_gmail_service()
+        try:
+            service = AttachmentService(self.shmail_app.repository)
+            if attachment_id is None:
+                results = service.download_all_attachments(
+                    message_id=message_id, gmail_service=gmail_service
+                )
+            else:
+                results = [
+                    service.download_attachment(
+                        message_id=message_id,
+                        attachment_id=attachment_id,
+                        gmail_service=gmail_service,
+                    )
+                ]
+        except ValueError as exc:
+            notify = getattr(self.app, "notify", None)
+            if callable(notify):
+                notify(str(exc), severity="warning")
+            return
+        except Exception as exc:
+            notify = getattr(self.app, "notify", None)
+            if callable(notify):
+                notify(f"Attachment download failed: {exc}", severity="error")
+            return
+
+        notify = getattr(self.app, "notify", None)
+        if callable(notify):
+            if len(results) == 1:
+                notify(
+                    f"Downloaded {results[0].path.name} to {results[0].path.parent}",
+                    severity="information",
+                )
+            else:
+                notify(
+                    f"Downloaded {len(results)} attachments to {results[0].path.parent}",
+                    severity="information",
+                )
+
+    def _resolve_gmail_service(self):
+        """Return the active Gmail service when one session is connected."""
+        sync_service = getattr(self.app, "sync_service", None)
+        if sync_service is None:
+            return None
+        return getattr(sync_service, "gmail", None)
+
     def _resolve_focused_message_item(self) -> MessageItem | None:
         """Resolves focused context to the owning message card."""
         current = self.focused
@@ -492,10 +595,16 @@ class ThreadMessagesScreen(ModalScreen):
             self._set_active_message(sender)
         self.watch_focused(self.focused)
 
+    def on_message_item_attachment_download_requested(
+        self, event: MessageItem.AttachmentDownloadRequested
+    ) -> None:
+        """Download the chosen attachment from one inline message selector."""
+        self._download_attachments(event.message_id, event.attachment_id)
+
     def _set_active_message(
         self,
         target: MessageItem,
-        select_link_direction: int | None = None,
+        enter_internal_direction: int | None = None,
     ) -> None:
         """Apply accordion behavior and optionally enter target link context."""
         stack = self.query_one("#thread-stack")
@@ -512,6 +621,16 @@ class ThreadMessagesScreen(ModalScreen):
         target.focus()
         stack.scroll_to_widget(target)
 
-        if select_link_direction is not None and target.has_links():
-            target.active_link_index = -1
-            target.step_link(select_link_direction)
+        if enter_internal_direction is None:
+            return
+        target.active_link_index = -1
+        if enter_internal_direction > 0:
+            if target.focus_attachment_selector(open_overlay=False):
+                return
+            if target.has_links():
+                target.step_link(1)
+            return
+        if target.has_links():
+            target.step_link(-1)
+            return
+        target.focus_attachment_selector(open_overlay=False)

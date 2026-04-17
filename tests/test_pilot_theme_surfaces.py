@@ -50,6 +50,11 @@ def _border_hex(widget: Widget) -> str:
     return widget.styles.border.top[1].hex.lower()
 
 
+def _border_type(widget: Widget) -> str:
+    """Return the top border type token for one widget."""
+    return str(widget.styles.border.top[0]).lower()
+
+
 def _shortcut_pairs(container: Widget) -> list[tuple[str, str]]:
     """Return rendered shortcut key-label pairs from one mounted container."""
     keys = [
@@ -194,7 +199,7 @@ def test_draft_discard_modal_uses_runtime_theme_tokens(
             title = screen.query_one("#message-draft-discard-title", Static)
 
             assert _color_hex(screen, "background") == "#ffffff8c"
-            assert _border_hex(modal) == "#4a4a4a"
+            assert _border_type(modal) in {"", "none"}
             assert _color_hex(title, "color") == "#4a4a4a"
 
     asyncio.run(run_test())
@@ -288,14 +293,14 @@ def test_main_footer_renders_configured_shortcut_labels(
     original_label_edit = settings.keybindings.label_edit
     original_first = settings.keybindings.first
     original_last = settings.keybindings.last
-    original_pane_next = settings.keybindings.pane_next
+    original_pane_toggle = settings.keybindings.pane_toggle
     try:
         settings.keybindings.compose = "c"
         settings.keybindings.label_new = "ctrl+n"
         settings.keybindings.label_edit = "ctrl+e"
         settings.keybindings.first = "home"
         settings.keybindings.last = "end"
-        settings.keybindings.pane_next = "ctrl+l"
+        settings.keybindings.pane_toggle = "ctrl+l"
 
         async def run_test() -> None:
             app = ThemedMainApp(test_db, Theme(name="white", source="preset"))
@@ -311,8 +316,8 @@ def test_main_footer_renders_configured_shortcut_labels(
                 )
                 assert ("c", "Compose") in shortcuts
                 assert ("Ctrl+n", "New label") in shortcuts
-                assert ("Home/End", "Home/End") in shortcuts
-                assert ("Ctrl+l", "Threads") in shortcuts
+                assert ("Home/End", "Jump") in shortcuts
+                assert ("Ctrl+l", "Pane") in shortcuts
                 assert ("Ctrl+e", "Edit label") not in shortcuts
 
                 await pilot.press("down", "down", "down")
@@ -321,7 +326,7 @@ def test_main_footer_renders_configured_shortcut_labels(
                 shortcuts = _shortcut_pairs(
                     footer.query_one("#app-shortcuts", Horizontal)
                 )
-                assert ("Ctrl+e", "Edit label") in shortcuts
+                assert ("Ctrl+e", "Edit") in shortcuts
 
         asyncio.run(run_test())
     finally:
@@ -330,7 +335,7 @@ def test_main_footer_renders_configured_shortcut_labels(
         settings.keybindings.label_edit = original_label_edit
         settings.keybindings.first = original_first
         settings.keybindings.last = original_last
-        settings.keybindings.pane_next = original_pane_next
+        settings.keybindings.pane_toggle = original_pane_toggle
 
 
 def test_thread_footer_renders_configured_shortcut_labels(
@@ -400,7 +405,7 @@ def test_discard_dialog_renders_configured_shortcut_labels(
                     dialog.query_one("#message-draft-discard-shortcuts", Horizontal)
                 )
                 assert ("Space", "Choose") in shortcuts
-                assert ("s/w", "Move") in shortcuts
+                assert ("s/w", "Nav") in shortcuts
                 assert ("Ctrl+w", "Keep") in shortcuts
 
         asyncio.run(run_test())

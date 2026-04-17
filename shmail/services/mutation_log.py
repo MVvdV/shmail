@@ -103,6 +103,15 @@ class MutationLogService:
             self.mark_ready(mutation_id)
         return ids
 
+    def retry_draft_mutations(self, draft_id: str) -> list[str]:
+        """Return failed or blocked queued-send draft mutations back to ready state."""
+        ids = self.repository.list_retryable_mutation_ids_for_target(
+            target_kind="draft", target_id=draft_id
+        )
+        for mutation_id in ids:
+            self.mark_ready(mutation_id)
+        return ids
+
     def retry_thread_mutations(self, thread_id: str) -> list[str]:
         """Return failed or blocked thread-associated mutations back to ready state."""
         ids = self.repository.list_retryable_mutation_ids_for_thread(thread_id)

@@ -73,6 +73,10 @@ def test_parse_gmail_response_basic(raw_gmail_message):
     assert message.body_conversion_warnings == "[]"
     assert message.is_read is False
     assert message.has_attachments is True
+    assert len(message.attachments) == 1
+    assert message.attachments[0].id == "msg123:1"
+    assert message.attachments[0].filename == "test.pdf"
+    assert message.attachments[0].mime_type == "application/pdf"
     assert len(message.labels) == 2
     assert message.labels[0].id == "INBOX"
     assert result.parse_metadata is not None
@@ -100,6 +104,16 @@ def test_extract_contacts_logic(raw_gmail_message):
     alice = next(c for c in result.contacts if c.email == "alice@example.com")
     assert alice.name == "Alice"
     assert alice.timestamp.tzinfo == timezone.utc
+
+
+def test_decode_attachment_payload_returns_binary_and_name(raw_gmail_message):
+    """Ensure attachment downloads can rehydrate one raw MIME part."""
+    payload, filename = MessageParser.decode_attachment_payload(
+        raw_gmail_message["raw"], 1
+    )
+
+    assert filename == "test.pdf"
+    assert payload == b"dummy-pdf-content"
 
 
 def test_timestamp_normalization():

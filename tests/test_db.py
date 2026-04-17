@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pytest
 
-from shmail.models import Label, Message, MessageDraft
+from shmail.models import Attachment, Label, Message, MessageDraft
 from shmail.services.db import DatabaseRepository
 
 
@@ -83,6 +83,85 @@ def test_label_schema_adds_metadata_columns(test_db):
     assert "message_list_visibility" in columns
     assert "background_color" in columns
     assert "text_color" in columns
+
+
+def test_attachment_schema_and_persistence(test_db):
+    """Ensure attachment metadata schema exists and persists with messages."""
+    with test_db.get_connection() as conn:
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(message_attachments)").fetchall()
+        }
+
+    assert "attachment_index" in columns
+    assert "filename" in columns
+    assert "mime_type" in columns
+    assert "size_bytes" in columns
+    assert "content_id" in columns
+    assert "content_disposition" in columns
+    assert "is_inline" in columns
+
+    message = Message(
+        id="msg_attachment_1",
+        thread_id="thread_attachment_1",
+        subject="Attachment",
+        sender="sender@example.com",
+        snippet="snippet",
+        timestamp=datetime.now(),
+        has_attachments=True,
+        attachments=[
+            Attachment(
+                id="msg_attachment_1:1",
+                message_id="msg_attachment_1",
+                attachment_index=1,
+                filename="test.pdf",
+                mime_type="application/pdf",
+                size_bytes=123,
+                content_disposition="attachment",
+                is_inline=False,
+            )
+        ],
+    )
+
+    with test_db.transaction() as conn:
+        test_db.upsert_message(conn, message)
+
+    attachments = test_db.list_message_attachments("msg_attachment_1")
+    assert len(attachments) == 1
+    assert attachments[0]["id"] == "msg_attachment_1:1"
+    assert attachments[0]["filename"] == "test.pdf"
+    assert attachments[0]["mime_type"] == "application/pdf"
+    assert attachments[0]["size_bytes"] == 123
+
+
+def test_upsert_label_preserves_message_associations(test_db):
+    """Ensure label metadata updates do not drop existing message-label joins."""
+    with test_db.transaction() as conn:
+        test_db.upsert_label(conn, "INBOX", "Inbox", "system")
+        message = Message(
+            id="msg_inbox_1",
+            thread_id="thread_inbox_1",
+            subject="Inbox Message",
+            sender="sender@example.com",
+            snippet="snippet",
+            timestamp=datetime.now(),
+            labels=[Label(id="INBOX", name="Inbox", type="system")],
+        )
+        test_db.upsert_message(conn, message)
+
+    assert test_db.list_message_label_ids("msg_inbox_1") == ["INBOX"]
+
+    with test_db.transaction() as conn:
+        test_db.upsert_label(
+            conn,
+            "INBOX",
+            "Inbox",
+            "system",
+            background_color="#4986e7",
+            text_color="#ffffff",
+        )
+
+    assert test_db.list_message_label_ids("msg_inbox_1") == ["INBOX"]
 
 
 def test_message_body_metadata_schema_and_persistence(test_db):

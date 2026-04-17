@@ -82,13 +82,9 @@ class Keybindings(BaseModel):
     account: str = Field(
         default="a", description="Focus and open the account selector in the header."
     )
-    get_mail: str = Field(
-        default="ctrl+g",
-        description="Run a user-triggered sync and replay pass.",
-    )
-    mutations: str = Field(
-        default="ctrl+m",
-        description="Open the mutation inspector for pending and failed local replay items.",
+    sync: str = Field(
+        default="s",
+        description="Run a sync pass that replays local changes and fetches fresh mail.",
     )
     compose: str = Field(
         default="c", description="Open message draft composer from supported screens."
@@ -116,9 +112,9 @@ class Keybindings(BaseModel):
         default="u",
         description="Restore the focused trashed message or thread back to Inbox.",
     )
-    retry: str = Field(
-        default="ctrl+r",
-        description="Retry failed or blocked local replay for the focused message or thread.",
+    retry_send: str = Field(
+        default="y",
+        description="Retry one failed queued send for the focused outbox draft.",
     )
     send: str = Field(
         default="ctrl+enter",
@@ -130,11 +126,8 @@ class Keybindings(BaseModel):
     )
     first: str = Field(default="g", description="Jump to the first item in a list.")
     last: str = Field(default="G", description="Jump to the last item in a list.")
-    pane_next: str = Field(
-        default="tab", description="Move focus to the next primary pane."
-    )
-    pane_prev: str = Field(
-        default="shift+tab", description="Move focus to the previous primary pane."
+    pane_toggle: str = Field(
+        default="tab", description="Toggle focus between the primary workspace panes."
     )
     resize_narrow: str = Field(
         default="[", description="Shrink the current resizable pane."
@@ -160,6 +153,19 @@ class Keybindings(BaseModel):
         default="shift+tab",
         description="Reverse through thread card and link focus targets.",
     )
+    attachment_download: str = Field(
+        default="d",
+        description="Choose one attachment from the focused message to download.",
+    )
+
+
+class AttachmentsSettings(BaseModel):
+    """User-configurable attachment download behavior."""
+
+    download_directory: str = Field(
+        default=str(Path.home() / "Downloads"),
+        description="Directory used for direct attachment downloads.",
+    )
 
 
 class Settings(BaseModel):
@@ -176,6 +182,7 @@ class Settings(BaseModel):
         default=500,
         description="Maximum number of messages to store in the local cache.",
     )
+    attachments: AttachmentsSettings = Field(default_factory=AttachmentsSettings)
     keybindings: Keybindings = Field(default_factory=Keybindings)
 
 
@@ -223,6 +230,15 @@ def load_settings() -> Settings:
         keybinding_data = data.get("keybindings")
         if isinstance(keybinding_data, dict):
             keybinding_data = dict(keybinding_data)
+            if "sync" not in keybinding_data and "get_mail" in keybinding_data:
+                keybinding_data["sync"] = keybinding_data["get_mail"]
+            if "retry_send" not in keybinding_data and "retry" in keybinding_data:
+                keybinding_data["retry_send"] = keybinding_data["retry"]
+            if "pane_toggle" not in keybinding_data:
+                if "pane_next" in keybinding_data:
+                    keybinding_data["pane_toggle"] = keybinding_data["pane_next"]
+                elif "pane_prev" in keybinding_data:
+                    keybinding_data["pane_toggle"] = keybinding_data["pane_prev"]
             if (
                 "compose_preview_toggle" not in keybinding_data
                 and "compose_tab_next" in keybinding_data
@@ -234,10 +250,16 @@ def load_settings() -> Settings:
                 keybinding_data["compose_preview_toggle"] = ",".join(toggle_parts)
             keybinding_data.pop("compose_tab_next", None)
             keybinding_data.pop("compose_tab_prev", None)
+            keybinding_data.pop("get_mail", None)
+            keybinding_data.pop("retry", None)
+            keybinding_data.pop("mutations", None)
             if keybinding_data.get("thread_cycle_forward") == "tab,f":
                 keybinding_data["thread_cycle_forward"] = "tab"
             if keybinding_data.get("thread_cycle_backward") == "shift+tab,F":
                 keybinding_data["thread_cycle_backward"] = "shift+tab"
+            keybinding_data.pop("pane_next", None)
+            keybinding_data.pop("pane_prev", None)
+            keybinding_data.pop("attachment_download_all", None)
             data["keybindings"] = keybinding_data
 
         return Settings(**data)

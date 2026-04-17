@@ -7,9 +7,9 @@ from unittest.mock import patch
 
 import pytest
 from textual.app import App
-from textual.widgets import Input, TextArea
+from textual.widgets import Input, Select, TextArea
 
-from shmail.models import Message, MessageDraft
+from shmail.models import Attachment, Message, MessageDraft
 from shmail.screens.message_draft import MessageDraftScreen
 from shmail.screens.thread_messages import ThreadMessagesScreen
 from shmail.services.db import DatabaseRepository
@@ -47,6 +47,16 @@ def _seed_thread_messages(test_db: DatabaseRepository) -> None:
         body="[Example](https://example.com) and [Blocked](javascript:alert(1))",
         body_links=body_links_payload,
         timestamp=now,
+        attachments=[
+            Attachment(
+                id="msg_latest:1",
+                message_id="msg_latest",
+                attachment_index=1,
+                filename="report.pdf",
+                size_bytes=2048,
+            )
+        ],
+        has_attachments=True,
     )
     older = Message(
         id="msg_older",
@@ -86,8 +96,10 @@ class ViewerTestApp(App):
         self.push_screen(ThreadMessagesScreen("thread_1"))
 
 
-def test_thread_viewer_cycle_traversal_between_links_and_cards(test_db):
-    """Verify Tab-like traversal cycles links before advancing cards."""
+def test_thread_viewer_cycle_traversal_between_attachment_selector_links_and_cards(
+    test_db,
+):
+    """Verify Tab-like traversal visits attachment selector before body links."""
     _seed_thread_messages(test_db)
 
     async def run_test() -> None:
@@ -107,6 +119,10 @@ def test_thread_viewer_cycle_traversal_between_links_and_cards(test_db):
             latest, older = items
             assert latest.expanded is True
             assert screen.focused is latest
+
+            screen.action_cycle_forward()
+            await pilot.pause()
+            assert isinstance(screen.focused, Select)
 
             screen.action_cycle_forward()
             await pilot.pause()
@@ -131,6 +147,38 @@ def test_thread_viewer_cycle_traversal_between_links_and_cards(test_db):
             screen.action_cycle_backward()
             await pilot.pause()
             assert latest.active_link_index == 0
+            assert screen.focused is latest
+
+            screen.action_cycle_backward()
+            await pilot.pause()
+            assert isinstance(screen.focused, Select)
+
+            screen.action_cycle_backward()
+            await pilot.pause()
+            assert screen.focused is latest
+
+    asyncio.run(run_test())
+
+
+def test_attachment_download_binding_focuses_inline_selector(test_db):
+    """Verify the attachment download binding focuses and opens the inline selector."""
+    _seed_thread_messages(test_db)
+
+    async def run_test() -> None:
+        app = ViewerTestApp(test_db)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.pause()
+
+            screen = cast(ThreadMessagesScreen, app.screen)
+            latest = screen.query_one(MessageItem)
+
+            screen.action_download_attachment()
+            await pilot.pause()
+
+            selector = latest.query_one("#message-attachment-select", Select)
+            assert latest.attachment_selector_has_focus() is True
+            assert selector.expanded is True
 
     asyncio.run(run_test())
 

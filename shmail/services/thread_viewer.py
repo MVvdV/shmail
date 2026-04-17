@@ -23,19 +23,33 @@ class ThreadViewerService:
             message_id = str(message.get("id") or "")
             if message_id.startswith("draft:"):
                 message.setdefault("labels", [])
-                message["mutation_pending_count"] = (
-                    1
-                    if str(message.get("draft_state") or "") == "queued_to_send"
-                    else 0
-                )
-                message["mutation_failed_count"] = 0
-                message["mutation_state"] = (
-                    "ready_for_sync"
-                    if str(message.get("draft_state") or "") == "queued_to_send"
-                    else ""
-                )
+                message.setdefault("attachments", [])
+                draft_id = str(message.get("draft_id") or "")
+                if (
+                    draft_id
+                    and str(message.get("draft_state") or "") == "queued_to_send"
+                ):
+                    status = self.repository.get_draft_mutation_summary(draft_id)
+                    message["mutation_pending_count"] = int(
+                        status.get("pending_count") or 0
+                    )
+                    message["mutation_failed_count"] = int(
+                        status.get("failed_count") or 0
+                    )
+                    message["mutation_blocked_count"] = int(
+                        status.get("blocked_count") or 0
+                    )
+                    message["mutation_state"] = str(status.get("state") or "")
+                else:
+                    message["mutation_pending_count"] = 0
+                    message["mutation_failed_count"] = 0
+                    message["mutation_blocked_count"] = 0
+                    message["mutation_state"] = ""
                 continue
             message["labels"] = self.repository.list_message_labels(message_id)
+            message["attachments"] = self.repository.list_message_attachments(
+                message_id
+            )
             status = self.repository.get_message_mutation_summary(message_id)
             message["mutation_pending_count"] = int(status.get("pending_count") or 0)
             message["mutation_failed_count"] = int(status.get("failed_count") or 0)

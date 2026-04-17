@@ -12,7 +12,6 @@ from textual.message import Message
 from textual.reactive import reactive
 
 from shmail.config import settings
-from shmail.screens.mutation_inspector import MutationInspectorScreen
 from shmail.screens.message_draft import MessageDraftCloseUpdate
 from shmail.screens import LoadingScreen, LoginScreen, MainScreen
 from shmail.widgets import AppHeader
@@ -44,15 +43,9 @@ class ShmailApp(App):
             settings.keybindings.account, "toggle_account_menu", "Account", show=False
         ),
         Binding(
-            settings.keybindings.get_mail,
-            "get_mail",
-            "Get Mail",
-            show=False,
-        ),
-        Binding(
-            settings.keybindings.mutations,
-            "open_mutation_inspector",
-            "Mutations",
+            settings.keybindings.sync,
+            "sync",
+            "Sync",
             show=False,
         ),
     ]
@@ -170,6 +163,16 @@ class ShmailApp(App):
         if self.sync_service is not None:
             self.sync_service.reset_clients()
 
+    def _restart_sync_timer(self) -> None:
+        """Re-arm periodic sync scheduling after lifecycle recovery."""
+        if self.sync_service is None:
+            return
+        if self._sync_timer is not None:
+            self._sync_timer.stop()
+        self._sync_timer = self.set_interval(
+            self.settings.refresh_interval, self.trigger_sync
+        )
+
     def _refresh_visible_surfaces(self) -> None:
         """Force active screens to repaint and reload visible state."""
         self.refresh(repaint=True, layout=True)
@@ -199,10 +202,6 @@ class ShmailApp(App):
                 thread_id = str(getattr(screen, "thread_id", "") or "")
                 if callable(reload_thread) and thread_id:
                     reload_thread(thread_id)
-            elif screen_name == "MutationInspectorScreen":
-                refresh_action = getattr(screen, "action_refresh", None)
-                if callable(refresh_action):
-                    refresh_action()
 
     def _recover_from_lifecycle_event(self, reason: str) -> None:
         """Recover from wake/focus/resize transitions with a hard redraw path."""
@@ -211,10 +210,12 @@ class ShmailApp(App):
             return
         self._last_recovery_at = now
         self._lifecycle_generation += 1
+        self._sync_in_flight = False
         self._resume_refresh_pending = False
         self._last_suspend_at = 0.0
         logger.info("Lifecycle recovery triggered: %s", reason)
         self._reset_provider_clients()
+        self._restart_sync_timer()
         self._refresh_visible_surfaces()
 
     def on_app_focus(self, event: events.AppFocus) -> None:
@@ -258,6 +259,35 @@ class ShmailApp(App):
                 reload_thread = getattr(screen, "reload_thread_if_matching", None)
                 if callable(reload_thread):
                     reload_thread(source_thread_id)
+
+    def apply_label_update(self, result) -> None:
+        """Refresh visible label-dependent surfaces after one label edit."""
+        if result is None:
+            return
+
+        focus_label_id = getattr(result, "focus_label_id", None)
+        for screen in self.screen_stack:
+            screen_name = screen.__class__.__name__
+            if screen_name == "MainScreen":
+                try:
+                    labels_sidebar = screen.query_one("#labels-sidebar")
+                    refresh_labels = getattr(labels_sidebar, "refresh_labels", None)
+                    if callable(refresh_labels):
+                        refresh_labels(selected_label_id=focus_label_id)
+                    thread_list = screen.query_one("#threads-list")
+                    current_label = str(
+                        getattr(thread_list, "current_label_id", "") or ""
+                    )
+                    load_threads = getattr(thread_list, "load_threads", None)
+                    if callable(load_threads) and current_label:
+                        load_threads(current_label)
+                except NoMatches:
+                    pass
+            elif screen_name == "ThreadMessagesScreen":
+                reload_thread = getattr(screen, "reload_thread_if_matching", None)
+                thread_id = str(getattr(screen, "thread_id", "") or "")
+                if callable(reload_thread) and thread_id:
+                    reload_thread(thread_id)
 
     def _refresh_main_screen_drafts(self, screen, source_thread_id: str) -> None:
         """Refresh draft-related main-screen surfaces after compose changes."""
@@ -371,10 +401,6 @@ class ShmailApp(App):
                 thread_id = str(getattr(screen, "thread_id", "") or "")
                 if callable(reload_thread) and thread_id:
                     reload_thread(thread_id)
-            elif screen_name == "MutationInspectorScreen":
-                refresh_action = getattr(screen, "action_refresh", None)
-                if callable(refresh_action):
-                    refresh_action()
 
     def replay_mutations(self, mutation_ids: list[str] | None) -> list[str]:
         """Replay specific or queued mutations through the configured registry."""
@@ -417,16 +443,12 @@ class ShmailApp(App):
             return
         header.activate_account_menu()
 
-    def action_open_mutation_inspector(self) -> None:
-        """Open the mutation inspector modal from the current screen."""
-        self.push_screen(MutationInspectorScreen())
+    def action_sync(self) -> None:
+        """Run one user-triggered reconciliation and fetch pass."""
+        self.run_worker(self._run_sync(), exclusive=False)
 
-    def action_get_mail(self) -> None:
-        """Run one user-triggered replay and mail sync pass."""
-        self.run_worker(self._run_get_mail(), exclusive=False)
-
-    async def _run_get_mail(self) -> None:
-        """Replay deferred mutations, then fetch new mail."""
+    async def _run_sync(self) -> None:
+        """Replay deferred mutations, then fetch fresh mail."""
         self.replay_mutations(None)
         await self.trigger_sync()
 

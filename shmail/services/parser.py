@@ -18,7 +18,14 @@ from lxml.html import HtmlElement, fromstring
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
-from shmail.models import Contact, Label, Message, ParsedMessage, ParseMetadata
+from shmail.models import (
+    Attachment,
+    Contact,
+    Label,
+    Message,
+    ParsedMessage,
+    ParseMetadata,
+)
 from shmail.services.link_policy import is_executable_href
 
 logger = logging.getLogger(__name__)
@@ -89,8 +96,9 @@ class MessageParser:
             timestamp = datetime.fromtimestamp(ms_val / 1000.0, tz=timezone.utc)
 
         body_text, body_links, parse_metadata = MessageParser._extract_body(mime_msg)
+        attachments = MessageParser._extract_attachments(mime_msg, message_id)
         is_read = "UNREAD" not in label_ids
-        has_attachments = MessageParser._check_attachments(mime_msg)
+        has_attachments = bool(attachments)
         labels = MessageParser._extract_labels(label_ids)
         contacts = MessageParser._extract_contacts(mime_msg, timestamp)
 
@@ -129,10 +137,27 @@ class MessageParser:
                 is_read=is_read,
                 has_attachments=has_attachments,
                 labels=labels,
+                attachments=attachments,
             ),
             contacts=contacts,
             parse_metadata=parse_metadata,
         )
+
+    @staticmethod
+    def decode_attachment_payload(
+        raw_b64: str, attachment_index: int
+    ) -> tuple[bytes, str]:
+        """Return the binary payload and resolved filename for one attachment."""
+        raw_bytes = base64.urlsafe_b64decode(raw_b64)
+        mime_msg = message_from_bytes(raw_bytes)
+        attachments = list(MessageParser._iter_attachment_parts(mime_msg))
+        if not (1 <= attachment_index <= len(attachments)):
+            raise ValueError("Attachment not found in message payload.")
+        part = attachments[attachment_index - 1]
+        filename = str(part.get_filename() or "").strip()
+        if not filename:
+            filename = f"attachment-{attachment_index}{MessageParser._guess_attachment_extension(part.get_content_type())}"
+        return part.get_payload(decode=True) or b"", filename
 
     @staticmethod
     def _extract_body(mime_msg) -> tuple[str, list[dict], ParseMetadata]:
@@ -716,10 +741,65 @@ class MessageParser:
         return [Label(id=label_id, name="", type="") for label_id in label_ids]
 
     @staticmethod
-    def _check_attachments(mime_msg) -> bool:
-        """Return whether a message contains attachments."""
-        return (
-            any(part.get_filename() for part in mime_msg.walk())
-            if mime_msg.is_multipart()
-            else False
-        )
+    def _extract_attachments(mime_msg, message_id: str) -> List[Attachment]:
+        """Return attachment metadata discovered in MIME parts."""
+        attachments: List[Attachment] = []
+        for attachment_index, part in enumerate(
+            MessageParser._iter_attachment_parts(mime_msg), start=1
+        ):
+            filename = str(part.get_filename() or "").strip()
+            content_type = str(part.get_content_type() or "").strip() or None
+            content_disposition = (
+                str(part.get_content_disposition() or "").strip() or None
+            )
+            content_id = str(part.get("Content-ID") or "").strip("<>") or None
+            payload = part.get_payload(decode=True) or b""
+            if not filename:
+                extension = MessageParser._guess_attachment_extension(content_type)
+                filename = f"attachment-{attachment_index}{extension}"
+            attachments.append(
+                Attachment(
+                    id=f"{message_id}:{attachment_index}",
+                    message_id=message_id,
+                    attachment_index=attachment_index,
+                    filename=filename,
+                    mime_type=content_type,
+                    size_bytes=len(payload),
+                    content_id=content_id,
+                    content_disposition=content_disposition,
+                    is_inline=content_disposition == "inline",
+                )
+            )
+        return attachments
+
+    @staticmethod
+    def _iter_attachment_parts(mime_msg):
+        """Yield MIME parts that should be treated as downloadable attachments."""
+        if not mime_msg.is_multipart():
+            return []
+        parts = []
+        for part in mime_msg.walk():
+            if part.is_multipart():
+                continue
+            disposition = str(part.get_content_disposition() or "").strip().lower()
+            filename = str(part.get_filename() or "").strip()
+            content_type = str(part.get_content_type() or "").strip().lower()
+            if (
+                disposition == "attachment"
+                or filename
+                or (disposition == "inline" and not content_type.startswith("text/"))
+            ):
+                parts.append(part)
+        return parts
+
+    @staticmethod
+    def _guess_attachment_extension(content_type: str | None) -> str:
+        """Return a small default extension for unnamed attachments."""
+        mime_to_extension = {
+            "application/pdf": ".pdf",
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/gif": ".gif",
+            "text/plain": ".txt",
+        }
+        return mime_to_extension.get(str(content_type or "").lower(), "")

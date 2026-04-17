@@ -16,6 +16,20 @@ class Label(BaseModel):
     text_color: Optional[str] = None
 
 
+class Attachment(BaseModel):
+    """Represents one downloadable attachment discovered in a message."""
+
+    id: str
+    message_id: str
+    attachment_index: int
+    filename: str
+    mime_type: Optional[str] = None
+    size_bytes: int = 0
+    content_id: Optional[str] = None
+    content_disposition: Optional[str] = None
+    is_inline: bool = False
+
+
 class Message(BaseModel):
     """Represents a single message with its headers and content."""
 
@@ -42,6 +56,7 @@ class Message(BaseModel):
     is_read: bool = False
     has_attachments: bool = False
     labels: List[Label] = Field(default_factory=list)
+    attachments: List[Attachment] = Field(default_factory=list)
 
 
 class Thread(BaseModel):

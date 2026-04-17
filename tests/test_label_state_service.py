@@ -27,7 +27,11 @@ class FakeGmailService:
 
     def patch_label(self, label_id: str, body: dict) -> dict:
         self.patches.append((label_id, body))
-        response = {"id": label_id, "name": body["name"], "type": "user"}
+        response = {
+            "id": label_id,
+            "name": body.get("name", label_id),
+            "type": "user",
+        }
         if body.get("color") is not None:
             response["color"] = body["color"]
         return response
@@ -110,21 +114,90 @@ def test_delete_label_blocks_when_sublabels_exist(test_db):
         label_state.delete_label(label_id="work")
 
 
-def test_system_label_cannot_be_modified(test_db):
-    """Ensure user-only mutations reject Gmail system labels."""
+def test_system_label_update_keeps_fixed_name(test_db):
+    """Ensure system label updates ignore rename attempts and keep fixed names."""
+    with test_db.transaction() as conn:
+        test_db.upsert_label(conn, "INBOX", "Inbox", "system")
+
+    label_state = _build_label_state(test_db)
+    result = label_state.update_label(
+        label_id="INBOX",
+        leaf_name="Renamed",
+        parent_label_id=None,
+        background_color="#4986E7",
+        text_color="#FFFFFF",
+    )
+
+    stored = test_db.get_label("INBOX")
+    assert result.label_id == "INBOX"
+    assert stored is not None
+    assert stored["name"] == "Inbox"
+    assert stored["background_color"] == "#4986e7"
+    assert stored["text_color"] == "#ffffff"
+
+
+def test_system_label_can_update_colors_without_renaming(test_db):
+    """Ensure system labels support color changes while keeping fixed names."""
+    with test_db.transaction() as conn:
+        test_db.upsert_label(conn, "INBOX", "Inbox", "system")
+
+    label_state = _build_label_state(test_db)
+    gmail = FakeGmailService()
+
+    result = label_state.update_label_colors(
+        label_id="INBOX",
+        background_color="#4986E7",
+        text_color="#FFFFFF",
+        gmail_service=gmail,
+    )
+
+    stored = test_db.get_label("INBOX")
+    assert result.label_id == "INBOX"
+    assert stored is not None
+    assert stored["name"] == "Inbox"
+    assert stored["background_color"] == "#4986e7"
+    assert stored["text_color"] == "#ffffff"
+    assert gmail.patches == []
+
+
+def test_virtual_label_can_update_colors_locally_without_provider_patch(test_db):
+    """Ensure local-only labels support color changes without Gmail patch calls."""
+    label_state = _build_label_state(test_db)
+    gmail = FakeGmailService()
+
+    result = label_state.update_label_colors(
+        label_id="DRAFT",
+        background_color="#16A765",
+        text_color="#FFFFFF",
+        gmail_service=gmail,
+    )
+
+    stored = test_db.get_label("DRAFT")
+    assert result.label_id == "DRAFT"
+    assert stored is not None
+    assert stored["name"] == "Drafts"
+    assert stored["background_color"] == "#16a765"
+    assert stored["text_color"] == "#ffffff"
+    assert gmail.patches == []
+
+
+def test_background_only_color_update_auto_picks_readable_text(test_db):
+    """Ensure one chosen background color auto-selects a readable text color."""
     with test_db.transaction() as conn:
         test_db.upsert_label(conn, "INBOX", "Inbox", "system")
 
     label_state = _build_label_state(test_db)
 
-    with pytest.raises(ValueError, match="System labels"):
-        label_state.update_label(
-            label_id="INBOX",
-            leaf_name="Renamed",
-            parent_label_id=None,
-            background_color=None,
-            text_color=None,
-        )
+    label_state.update_label_colors(
+        label_id="INBOX",
+        background_color="#f6c5be",
+        text_color=None,
+    )
+
+    stored = test_db.get_label("INBOX")
+    assert stored is not None
+    assert stored["background_color"] == "#f6c5be"
+    assert stored["text_color"] == "#000000"
 
 
 def test_update_label_clears_local_colors_when_provider_clears_them(test_db):

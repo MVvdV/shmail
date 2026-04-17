@@ -94,6 +94,20 @@ class MockApp(App):
             draft_count = self.repository.get_thread_draft_count(source_thread_id)
             thread_list.update_thread_draft_marker(source_thread_id, draft_count)
 
+    def apply_label_update(self, result) -> None:
+        """Mirror label-edit refresh handling used by the real app."""
+        if result is None:
+            return
+
+        main_screen = self.screen
+        labels_sidebar = main_screen.query_one("#labels-sidebar", LabelsSidebar)
+        labels_sidebar.refresh_labels(selected_label_id=result.focus_label_id)
+
+        thread_list = main_screen.query_one("#threads-list", ThreadList)
+        current_label = str(getattr(thread_list, "current_label_id", "") or "")
+        if current_label:
+            thread_list.load_threads(current_label)
+
     def on_mount(self) -> None:
         self.push_screen(MainScreen())
 
@@ -144,6 +158,74 @@ def test_message_item_failed_state_renders_failure_icon_chip():
     )
 
     assert "!" in item._render_label_chips()
+
+
+def test_thread_row_renders_saved_label_colors():
+    """Thread rows should render custom colors from stored label metadata."""
+    row = ThreadRow(
+        {
+            "thread_id": "thread-1",
+            "thread_labels": [
+                {
+                    "id": "INBOX",
+                    "name": "Inbox",
+                    "background_color": "#4986e7",
+                    "text_color": "#ffffff",
+                }
+            ],
+        }
+    )
+
+    chips = row._render_label_chips()
+    assert "#4986e7" in chips
+    assert "#ffffff" in chips
+
+
+def test_message_item_renders_saved_label_colors():
+    """Message items should render custom colors from stored label metadata."""
+    item = MessageItem(
+        {
+            "subject": "Test",
+            "sender": "A",
+            "recipient_to": "B",
+            "timestamp": "2026-03-25T10:00:00+00:00",
+            "labels": [
+                {
+                    "id": "INBOX",
+                    "name": "Inbox",
+                    "background_color": "#4986e7",
+                    "text_color": "#ffffff",
+                }
+            ],
+        }
+    )
+
+    chips = item._render_label_chips()
+    assert "#4986e7" in chips
+    assert "#ffffff" in chips
+
+
+def test_message_item_attachment_shortcuts_and_select_render_when_available():
+    """Expanded message cards should expose one inline attachment selector."""
+    item = MessageItem(
+        {
+            "subject": "Test",
+            "sender": "A",
+            "recipient_to": "B",
+            "timestamp": "2026-03-25T10:00:00+00:00",
+            "attachments": [
+                {"id": "msg:1", "filename": "report.pdf", "size_bytes": 2048}
+            ],
+        }
+    )
+
+    shortcuts = item.get_shortcuts()
+    options = item._attachment_select_options()
+
+    labels = {label for _, label in shortcuts}
+    assert "Attachments" in labels
+    assert options[0][0].startswith("report.pdf")
+    assert options[-1][0] == "Download all attachments"
 
 
 def test_sidebar_labels_load(test_db):
@@ -841,7 +923,7 @@ def test_compose_preview_toggle_binding_switches_between_tabs(test_db):
             tabs = app.screen.query_one("#message-draft-body-tabs", TabbedContent)
             assert tabs.active == "draft-edit"
 
-            await pilot.press("f2")
+            await pilot.press(settings.keybindings.compose_preview_toggle)
             await pilot.pause()
             assert tabs.active == "draft-preview"
 
@@ -1058,8 +1140,8 @@ def test_edit_label_modal_updates_selected_user_label(test_db):
     asyncio.run(run_test())
 
 
-def test_edit_label_on_system_label_warns_and_stays_in_main(test_db):
-    """Verify system labels cannot enter the editable label modal."""
+def test_edit_label_on_system_label_opens_color_only_modal(test_db):
+    """Verify system labels can open a color-only label editor."""
     with test_db.transaction() as conn:
         test_db.upsert_label(conn, "INBOX", "Inbox", "system")
 
@@ -1080,11 +1162,97 @@ def test_edit_label_on_system_label_warns_and_stays_in_main(test_db):
             await pilot.press("e")
             await pilot.pause()
 
-            assert isinstance(app.screen, MainScreen)
-            assert app.notifications[-1] == (
-                "System labels cannot be modified.",
-                "warning",
+            assert isinstance(app.screen, LabelEditScreen)
+            name_field = app.screen.query_one("#label-editor-name", Input)
+            parent_select = app.screen.query_one("#label-editor-parent", Select)
+            assert name_field.value == "Inbox"
+            assert name_field.disabled is True
+            assert parent_select.disabled is True
+
+    asyncio.run(run_test())
+
+
+def test_label_editor_focus_switch_collapses_previous_color_dropdown(test_db):
+    """Verify tabbing between color selects closes the previously open dropdown."""
+    with test_db.transaction() as conn:
+        test_db.upsert_label(conn, "INBOX", "Inbox", "system")
+
+    async def run_test():
+        app = MockApp(test_db)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            labels_sidebar = app.screen.query_one("#labels-sidebar", LabelsSidebar)
+            inbox_item = find_node_by_data(labels_sidebar, "INBOX")
+            assert inbox_item is not None
+            labels_sidebar.label_list.index = labels_sidebar.label_list.children.index(
+                inbox_item
             )
+            labels_sidebar.label_list.focus()
+            await pilot.pause()
+
+            await pilot.press("e")
+            await pilot.pause()
+
+            assert isinstance(app.screen, LabelEditScreen)
+            background_select = app.screen.query_one(
+                "#label-editor-background-color", Select
+            )
+            text_select = app.screen.query_one("#label-editor-text-color", Select)
+
+            background_select.focus()
+            background_select.expanded = True
+            await pilot.pause()
+
+            text_select.focus()
+            await pilot.pause()
+
+            assert background_select.expanded is False
+
+    asyncio.run(run_test())
+
+
+def test_edit_label_on_virtual_label_updates_color_without_renaming(test_db):
+    """Verify virtual app labels support color-only edits through the modal."""
+
+    async def run_test():
+        app = MockApp(test_db)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            labels_sidebar = app.screen.query_one("#labels-sidebar", LabelsSidebar)
+            draft_item = find_node_by_data(labels_sidebar, "DRAFT")
+            assert draft_item is not None
+            labels_sidebar.label_list.index = labels_sidebar.label_list.children.index(
+                draft_item
+            )
+            labels_sidebar.label_list.focus()
+            await pilot.pause()
+
+            await pilot.press("e")
+            await pilot.pause()
+
+            assert isinstance(app.screen, LabelEditScreen)
+            name_field = app.screen.query_one("#label-editor-name", Input)
+            assert name_field.disabled is True
+            background_select = app.screen.query_one(
+                "#label-editor-background-color", Select
+            )
+            text_select = app.screen.query_one("#label-editor-text-color", Select)
+            background_select.value = "#f6c5be"
+            text_select.value = "#822111"
+            await pilot.pause()
+
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert isinstance(app.screen, MainScreen)
+            stored = test_db.get_label("DRAFT")
+            assert stored is not None
+            assert stored["name"] == "Drafts"
+            assert stored["background_color"] == "#f6c5be"
+            assert stored["text_color"] == "#822111"
 
     asyncio.run(run_test())
 
@@ -1115,14 +1283,14 @@ def test_shortcut_labels_follow_configured_bindings(monkeypatch):
     """Ensure user-facing shortcut labels reflect configured bindings."""
     original_first = settings.keybindings.first
     original_last = settings.keybindings.last
-    original_pane_next = settings.keybindings.pane_next
+    original_pane_toggle = settings.keybindings.pane_toggle
     original_cycle_forward = settings.keybindings.thread_cycle_forward
     original_label_new = settings.keybindings.label_new
     original_label_edit = settings.keybindings.label_edit
     try:
         settings.keybindings.first = "home"
         settings.keybindings.last = "end"
-        settings.keybindings.pane_next = "ctrl+l"
+        settings.keybindings.pane_toggle = "ctrl+l"
         settings.keybindings.thread_cycle_forward = "n"
         settings.keybindings.label_new = "ctrl+n"
         settings.keybindings.label_edit = "ctrl+e"
@@ -1141,15 +1309,16 @@ def test_shortcut_labels_follow_configured_bindings(monkeypatch):
             }
         ).get_shortcuts()
 
-        assert ("Home/End", "Home/End") in labels_shortcuts
-        assert ("Ctrl+l", "Threads") in labels_shortcuts
-        assert ("Home/End", "Home/End") in thread_shortcuts
+        assert ("Home/End", "Jump") in labels_shortcuts
+        assert ("Ctrl+l", "Pane") in labels_shortcuts
+        assert ("Home/End", "Jump") in thread_shortcuts
         assert ("x", "Cancel Queue") in outbox_shortcuts
+        assert ("s", "Sync") in thread_shortcuts
         assert any(shortcut[0].startswith("n/") for shortcut in message_shortcuts)
     finally:
         settings.keybindings.first = original_first
         settings.keybindings.last = original_last
-        settings.keybindings.pane_next = original_pane_next
+        settings.keybindings.pane_toggle = original_pane_toggle
         settings.keybindings.thread_cycle_forward = original_cycle_forward
         settings.keybindings.label_new = original_label_new
         settings.keybindings.label_edit = original_label_edit

@@ -129,13 +129,13 @@ class LabelsSidebar(Vertical):
             (binding_choices_label(settings.keybindings.select, "ENTER"), "Select"),
             (
                 movement_pair_label(settings.keybindings.up, settings.keybindings.down),
-                "Move",
+                "Nav",
             ),
             (
                 f"{binding_choices_label(settings.keybindings.first, 'G')}/{binding_choices_label(settings.keybindings.last, 'SHIFT+G')}",
-                "Home/End",
+                "Jump",
             ),
-            (binding_choices_label(settings.keybindings.pane_next, "TAB"), "Threads"),
+            (binding_choices_label(settings.keybindings.pane_toggle, "Tab"), "Pane"),
             (
                 f"{binding_choices_label(settings.keybindings.resize_narrow, '[')}/{binding_choices_label(settings.keybindings.resize_wide, ']')}",
                 "Resize",
@@ -146,7 +146,7 @@ class LabelsSidebar(Vertical):
                 1,
                 (
                     binding_choices_label(settings.keybindings.label_edit, "e"),
-                    "Edit label",
+                    "Edit",
                 ),
             )
         return shortcuts
@@ -248,13 +248,13 @@ class LabelsSidebar(Vertical):
         return None
 
     def _current_cursor_label_is_editable(self) -> bool:
-        """Return True when the highlighted label can be edited."""
+        """Return True when the highlighted label can open the editor."""
         if not self.is_attached:
             return False
         label_id = self._get_cursor_label_id() or self._get_selected_label_id()
         if not label_id:
             return False
-        return self.shmail_app.label_state.can_edit_label(label_id)
+        return self.shmail_app.label_state.can_edit_label_colors(label_id)
 
     def _load_labels_worker(self, selected_label_id: str | None) -> None:
         """Loads labels in a worker thread and mounts results on UI thread."""
@@ -449,15 +449,15 @@ class LabelsSidebar(Vertical):
         )
 
     def action_edit_label(self) -> None:
-        """Open the edit-label modal for the selected custom label."""
+        """Open the edit-label modal for the selected label."""
         selected_label_id = self._get_cursor_label_id() or self._get_selected_label_id()
         if not selected_label_id:
             return
         label_state = self.shmail_app.label_state
-        if not label_state.can_edit_label(selected_label_id):
+        if not label_state.can_edit_label_colors(selected_label_id):
             notify = getattr(self.app, "notify", None)
             if callable(notify):
-                notify("System labels cannot be modified.", severity="warning")
+                notify("This label cannot be edited.", severity="warning")
             return
         self.app.push_screen(
             LabelEditScreen(LabelEditorSeed(label_id=selected_label_id)),
@@ -465,10 +465,12 @@ class LabelsSidebar(Vertical):
         )
 
     def _on_label_editor_closed(self, result: LabelMutationResult | None) -> None:
-        """Refresh the sidebar after one label-management mutation."""
+        """Delegate label-edit refresh handling to the app authority."""
         if result is None:
             return
-        self.refresh_labels(selected_label_id=result.focus_label_id)
+        apply_update = getattr(self.shmail_app, "apply_label_update", None)
+        if callable(apply_update):
+            apply_update(result)
 
     def on_descendant_focus(self, _event) -> None:
         """Sync cursor position to the active label when sidebar regains focus."""

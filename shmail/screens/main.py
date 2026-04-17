@@ -26,12 +26,9 @@ class MainScreen(Screen):
         Binding(settings.keybindings.compose, "compose_message", "Compose", show=False),
         Binding(settings.keybindings.label_new, "new_label", "New Label", show=False),
         Binding(
-            settings.keybindings.pane_next, "focus_next_pane", "Next Pane", show=False
-        ),
-        Binding(
-            settings.keybindings.pane_prev,
-            "focus_prev_pane",
-            "Previous Pane",
+            settings.keybindings.pane_toggle,
+            "toggle_pane_focus",
+            "Toggle Pane",
             show=False,
         ),
     ]
@@ -108,8 +105,6 @@ class MainScreen(Screen):
         if message.action == "restore":
             self._apply_thread_restore_action(message.thread_id, current_label_id)
             return
-        if message.action == "retry":
-            self._retry_thread_mutations(message.thread_id, current_label_id)
 
     def watch_focused(self, focused) -> None:
         """Updates the footer shortcuts when the focused widget changes."""
@@ -127,8 +122,8 @@ class MainScreen(Screen):
             (binding_choices_label(settings.keybindings.compose, "c"), "Compose"),
             (binding_choices_label(settings.keybindings.label_new, "n"), "New label"),
             (
-                binding_choices_label(settings.keybindings.get_mail, "Ctrl+G"),
-                "Get Mail",
+                binding_choices_label(settings.keybindings.sync, "S"),
+                "Sync",
             ),
         ]
 
@@ -139,8 +134,8 @@ class MainScreen(Screen):
         else:
             shortcuts.append(
                 (
-                    binding_choices_label(settings.keybindings.pane_next, "Tab"),
-                    "Threads",
+                    binding_choices_label(settings.keybindings.pane_toggle, "Tab"),
+                    "Pane",
                 )
             )
         footer.update_shortcuts(shortcuts)
@@ -167,11 +162,7 @@ class MainScreen(Screen):
 
         labels_list.focus()
 
-    def action_focus_next_pane(self) -> None:
-        """Move focus to the opposite main pane."""
-        self._toggle_pane_focus()
-
-    def action_focus_prev_pane(self) -> None:
+    def action_toggle_pane_focus(self) -> None:
         """Move focus to the opposite main pane."""
         self._toggle_pane_focus()
 
@@ -195,12 +186,12 @@ class MainScreen(Screen):
             apply_update(update)
 
     def _on_label_editor_closed(self, result: LabelMutationResult | None) -> None:
-        """Refresh labels after creating or editing one from the main workspace."""
+        """Delegate label-edit refresh handling to the app authority."""
         if result is None:
             return
-        self.query_one(LabelsSidebar).refresh_labels(
-            selected_label_id=result.focus_label_id
-        )
+        apply_update = getattr(self.shmail_app, "apply_label_update", None)
+        if callable(apply_update):
+            apply_update(result)
 
     def _union_thread_label_ids(self, thread_id: str) -> list[str]:
         """Return mutable labels present on any provider message in one thread."""
@@ -298,22 +289,6 @@ class MainScreen(Screen):
             thread_id=thread_id,
             current_view_label_id=current_label_id,
         )
-        self._refresh_local_mutation_surfaces(current_label_id)
-
-    def _retry_thread_mutations(
-        self, thread_id: str, current_label_id: str | None
-    ) -> None:
-        """Retry failed or blocked thread-associated mutations inline."""
-        mutation_ids = self.shmail_app.mutation_log.retry_thread_mutations(thread_id)
-        if not mutation_ids:
-            notify = getattr(self.app, "notify", None)
-            if callable(notify):
-                notify(
-                    "No failed or blocked thread mutations to retry.",
-                    severity="warning",
-                )
-            return
-        self.shmail_app.replay_mutations(mutation_ids)
         self._refresh_local_mutation_surfaces(current_label_id)
 
     def _refresh_local_mutation_surfaces(self, current_label_id: str | None) -> None:

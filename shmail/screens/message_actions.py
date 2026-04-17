@@ -60,16 +60,27 @@ class LabelSelectionScreen(ModalScreen[list[str] | None]):
                 )
             )
 
-        with Vertical(id="message-action-modal"):
-            yield Static(self._dialog_title, id="message-action-title")
+        with Vertical(id="message-action-modal", classes="shmail-picker-panel"):
+            yield Static(
+                self._dialog_title,
+                id="message-action-title",
+                classes="shmail-picker-title",
+            )
             yield Static(
                 self._dialog_warning
                 or "Toggle mailbox markers and user labels locally.",
                 id="message-action-body",
+                classes="shmail-picker-body",
                 markup=False,
             )
-            yield SelectionList[str](*options, id="message-label-selection-list")
-            with Horizontal(id="message-action-shortcuts"):
+            yield SelectionList[str](
+                *options,
+                id="message-label-selection-list",
+                classes="shmail-picker-list shmail-picker-list-multi",
+            )
+            with Horizontal(
+                id="message-action-shortcuts", classes="shmail-picker-shortcuts"
+            ):
                 yield Static(
                     binding_choices_label(settings.keybindings.select, "ENTER"),
                     classes="shortcut-key",
@@ -87,7 +98,7 @@ class LabelSelectionScreen(ModalScreen[list[str] | None]):
                     classes="shortcut-key",
                     markup=False,
                 )
-                yield Static("Move", classes="shortcut-label", markup=False)
+                yield Static("Nav", classes="shortcut-label", markup=False)
                 yield Static("•", classes="shortcut-separator")
                 yield Static(
                     binding_choices_label(settings.keybindings.close, "Q/ESC"),
@@ -152,15 +163,24 @@ class MoveSelectionScreen(ModalScreen[str | None]):
                 )
             )
 
-        with Vertical(id="message-action-modal"):
-            yield Static("Move", id="message-action-title")
+        with Vertical(id="message-action-modal", classes="shmail-picker-panel"):
+            yield Static(
+                "Move", id="message-action-title", classes="shmail-picker-title"
+            )
             yield Static(
                 "Choose one destination container to apply locally.",
                 id="message-action-body",
+                classes="shmail-picker-body",
                 markup=False,
             )
-            yield ListView(*items, id="move-destination-list")
-            with Horizontal(id="message-action-shortcuts"):
+            yield ListView(
+                *items,
+                id="move-destination-list",
+                classes="shmail-picker-list",
+            )
+            with Horizontal(
+                id="message-action-shortcuts", classes="shmail-picker-shortcuts"
+            ):
                 yield Static(
                     binding_choices_label(settings.keybindings.select, "ENTER"),
                     classes="shortcut-key",
@@ -175,7 +195,7 @@ class MoveSelectionScreen(ModalScreen[str | None]):
                     classes="shortcut-key",
                     markup=False,
                 )
-                yield Static("Move", classes="shortcut-label", markup=False)
+                yield Static("Nav", classes="shortcut-label", markup=False)
                 yield Static("•", classes="shortcut-separator")
                 yield Static(
                     binding_choices_label(settings.keybindings.close, "Q/ESC"),

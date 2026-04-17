@@ -8,14 +8,14 @@ from rich.markup import escape
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.dom import NoScreen
 from textual.events import Click
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import Markdown, Static
+from textual.widgets import Markdown, Select, Static
 
 from shmail.config import settings
 from shmail.services.draft_preview import to_rendered_markdown_preview
@@ -47,6 +47,16 @@ class MessageItem(Vertical):
     expanded = reactive(False)
     active_link_index = reactive(-1)
 
+    ATTACHMENT_SELECT_ALL = "__download_all__"
+
+    class AttachmentDownloadRequested(Message):
+        """Sent when one attachment or the all-download option is selected."""
+
+        def __init__(self, message_id: str, attachment_id: str | None) -> None:
+            self.message_id = message_id
+            self.attachment_id = attachment_id
+            super().__init__()
+
     def __init__(self, message_data: dict, **kwargs):
         super().__init__(**kwargs)
         self.add_class("thread-message-card")
@@ -58,6 +68,7 @@ class MessageItem(Vertical):
         else:
             self._body_source = raw_body
         self._body_links = self._load_body_links()
+        self._resetting_attachment_select = False
 
     @property
     def shmail_app(self) -> "ShmailApp":
@@ -84,6 +95,16 @@ class MessageItem(Vertical):
             yield Static(
                 self._render_label_chips(), classes="message-label-chips", markup=True
             )
+            if self.has_attachment_selector():
+                with Horizontal(classes="message-attachment-row"):
+                    yield Static("Attachments", classes="message-attachment-label")
+                    yield Select(
+                        self._attachment_select_options(),
+                        prompt="Choose attachment",
+                        allow_blank=True,
+                        id="message-attachment-select",
+                        classes="message-attachment-select shmail-select-inline",
+                    )
 
         yield Static("", classes="message-interaction-bar", markup=False)
         md = Markdown(
@@ -116,6 +137,7 @@ class MessageItem(Vertical):
         if not expanded:
             self.active_link_index = -1
         self._update_interaction_bar()
+        self._update_attachment_selector()
         self._refresh_markdown()
 
         if self.has_focus:
@@ -150,6 +172,40 @@ class MessageItem(Vertical):
     def has_links(self) -> bool:
         """Returns True when message has links for keyboard interaction."""
         return bool(self._body_links)
+
+    def has_attachment_selector(self) -> bool:
+        """Return True when this message exposes attachment download options."""
+        return bool(self.message_data.get("attachments")) and not bool(
+            self.message_data.get("is_draft")
+        )
+
+    def attachment_selector_has_focus(self) -> bool:
+        """Return True when the inline attachment selector owns focus."""
+        if not self.has_attachment_selector() or self.screen is None:
+            return False
+        try:
+            attachment_select = self.query_one("#message-attachment-select", Select)
+        except NoMatches:
+            return False
+        current = self.screen.focused
+        while current is not None:
+            if current is attachment_select:
+                return True
+            current = current.parent
+        return False
+
+    def focus_attachment_selector(self, *, open_overlay: bool = False) -> bool:
+        """Focus the attachment selector and optionally open its dropdown."""
+        if not self.has_attachment_selector() or not self.expanded:
+            return False
+        try:
+            attachment_select = self.query_one("#message-attachment-select", Select)
+        except NoMatches:
+            return False
+        attachment_select.focus()
+        if open_overlay:
+            attachment_select.action_show_overlay()
+        return True
 
     def step_link(self, direction: int) -> bool:
         """Moves the active link pointer; returns True if a link is selected."""
@@ -289,6 +345,18 @@ class MessageItem(Vertical):
         kind_hint = f" [{kind}]" if kind else ""
         bar.update(f"• {idx}/{len(self._body_links)}{kind_hint}{blocked} {label}")
 
+    def _update_attachment_selector(self) -> None:
+        """Show or hide the attachment selector based on expansion state."""
+        if not self.is_mounted or not self.has_attachment_selector():
+            return
+        try:
+            attachment_select = self.query_one("#message-attachment-select", Select)
+        except NoMatches:
+            return
+        attachment_select.display = self.expanded
+        label = self.query_one(".message-attachment-label", Static)
+        label.display = self.expanded
+
     def _load_body_links(self) -> list[dict]:
         """Loads persisted body link index from message row payload."""
         raw = self.message_data.get("body_links")
@@ -343,8 +411,11 @@ class MessageItem(Vertical):
         labels_key = binding_choices_label(settings.keybindings.labels, "L")
         trash_key = binding_choices_label(settings.keybindings.trash, "X")
         move_label = binding_choices_label(settings.keybindings.move, "M")
-        retry_key = binding_choices_label(settings.keybindings.retry, "Ctrl+R")
-        get_mail_key = binding_choices_label(settings.keybindings.get_mail, "Ctrl+G")
+        retry_send_key = binding_choices_label(settings.keybindings.retry_send, "Y")
+        sync_key = binding_choices_label(settings.keybindings.sync, "S")
+        download_key = binding_choices_label(
+            settings.keybindings.attachment_download, "D"
+        )
         try:
             current_view = str(getattr(self.screen, "view_label_id", "") or "").upper()
         except NoScreen:
@@ -358,23 +429,27 @@ class MessageItem(Vertical):
             f"{primary_binding_label(settings.keybindings.thread_cycle_forward, 'TAB')}/"
             f"{primary_binding_label(settings.keybindings.thread_cycle_backward, 'S+TAB')}"
         )
+        has_attachments = bool(self.message_data.get("attachments"))
         if bool(self.message_data.get("is_draft")):
             if str(self.message_data.get("draft_state") or "") == "queued_to_send":
-                return [
+                shortcuts = [
                     (select_key, "View"),
                     (delete_key, "Cancel Queue"),
-                    (retry_key, "Retry"),
-                    (get_mail_key, "Get Mail"),
-                    (navigation_key, "Navigate"),
+                    (sync_key, "Sync"),
+                    (navigation_key, "Nav"),
                     (cycle_key, "Cycle"),
                     (close_key, "Close"),
                 ]
+                if (
+                    int(self.message_data.get("mutation_failed_count") or 0) > 0
+                    or int(self.message_data.get("mutation_blocked_count") or 0) > 0
+                ):
+                    shortcuts.insert(2, (retry_send_key, "Retry Send"))
+                return shortcuts
             return [
                 (select_key, "Resume"),
                 (delete_key, "Delete"),
-                (retry_key, "Retry"),
-                (get_mail_key, "Get Mail"),
-                (navigation_key, "Navigate"),
+                (navigation_key, "Nav"),
                 (cycle_key, "Cycle"),
                 (close_key, "Close"),
             ]
@@ -388,37 +463,100 @@ class MessageItem(Vertical):
             shortcuts = [
                 (select_key, "Open" if enter_label == "Open Link" else enter_label),
                 (reply_key, "Reply"),
-                (reply_all_key, "All"),
-                (forward_key, "Fwd"),
+                (reply_all_key, "Reply all"),
+                (forward_key, "Forward"),
                 (labels_key, "Labels"),
                 (move_label, "Move"),
                 (trash_key, "Delete" if current_view == "TRASH" else "Trash"),
-                (retry_key, "Retry"),
-                (get_mail_key, "Get Mail"),
-                (navigation_key, "Navigate"),
+                (sync_key, "Sync"),
+                (navigation_key, "Nav"),
                 (cycle_key, "Cycle"),
                 (close_key, "Close"),
             ]
+            if has_attachments:
+                shortcuts.insert(4, (download_key, "Attachments"))
             if current_view == "TRASH":
                 shortcuts.insert(7, (restore_key, "Restore"))
             return shortcuts
         shortcuts = [
             (select_key, enter_label),
             (reply_key, "Reply"),
-            (reply_all_key, "All"),
-            (forward_key, "Fwd"),
+            (reply_all_key, "Reply all"),
+            (forward_key, "Forward"),
             (labels_key, "Labels"),
             (move_label, "Move"),
             (trash_key, "Delete" if current_view == "TRASH" else "Trash"),
-            (retry_key, "Retry"),
-            (get_mail_key, "Get Mail"),
-            (navigation_key, "Navigate"),
+            (sync_key, "Sync"),
+            (navigation_key, "Nav"),
             (cycle_key, "Cycle"),
             (close_key, "Close"),
         ]
+        if has_attachments:
+            shortcuts.insert(4, (download_key, "Attachments"))
         if current_view == "TRASH":
             shortcuts.insert(7, (restore_key, "Restore"))
         return shortcuts
+
+    def _attachment_select_options(self) -> list[tuple[str, str]]:
+        """Return formatted inline attachment options plus one download-all choice."""
+        attachments = list(self.message_data.get("attachments") or [])
+        if not attachments:
+            return []
+        size_labels = [self._format_attachment_size(item) for item in attachments]
+        filename_width = min(
+            44,
+            max(len(str(item.get("filename") or "attachment")) for item in attachments),
+        )
+        options = [
+            (
+                self._format_attachment_option(
+                    str(item.get("filename") or "attachment"),
+                    size_labels[index],
+                    filename_width,
+                ),
+                str(item.get("id") or ""),
+            )
+            for index, item in enumerate(attachments)
+        ]
+        options.append(("Download all attachments", self.ATTACHMENT_SELECT_ALL))
+        return options
+
+    @staticmethod
+    def _format_attachment_option(
+        filename: str, size_label: str, filename_width: int
+    ) -> str:
+        """Return one left/right aligned attachment option label."""
+        trimmed = (
+            filename
+            if len(filename) <= filename_width
+            else f"{filename[: filename_width - 1]}…"
+        )
+        return f"{trimmed:<{filename_width}}  {size_label:>10}"
+
+    @staticmethod
+    def _format_attachment_size(attachment: dict) -> str:
+        """Return one compact human-readable attachment size label."""
+        size = int(attachment.get("size_bytes") or 0)
+        if size < 1024:
+            return f"{size} B"
+        if size < 1024 * 1024:
+            return f"{size / 1024:.0f} KB"
+        return f"{size / (1024 * 1024):.1f} MB"
+
+    @on(Select.Changed, "#message-attachment-select")
+    def on_attachment_selected(self, event: Select.Changed) -> None:
+        """Post one download request when the inline selector changes value."""
+        if self._resetting_attachment_select:
+            return
+        value = str(event.value or "").strip()
+        if not value:
+            return
+        message_id = str(self.message_data.get("id") or "")
+        attachment_id = None if value == self.ATTACHMENT_SELECT_ALL else value
+        self.post_message(self.AttachmentDownloadRequested(message_id, attachment_id))
+        self._resetting_attachment_select = True
+        event.select.clear()
+        self._resetting_attachment_select = False
 
     def _render_label_chips(self) -> str:
         """Render one compact text-only label strip."""

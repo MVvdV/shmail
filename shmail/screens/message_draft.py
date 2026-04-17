@@ -98,11 +98,19 @@ class MessageDraftDiscardConfirmScreen(ModalScreen[str | None]):
         move_key = movement_pair_label(
             settings.keybindings.up, settings.keybindings.down
         )
-        with Vertical(id="message-draft-discard-modal"):
-            yield Static("Save or discard changes?", id="message-draft-discard-title")
+        with Vertical(
+            id="message-draft-discard-modal",
+            classes="shmail-picker-panel shmail-picker-panel-warning",
+        ):
+            yield Static(
+                "Save or discard changes?",
+                id="message-draft-discard-title",
+                classes="shmail-picker-title",
+            )
             yield Static(
                 "Close now, keep editing, or discard the unsaved changes in this draft.",
                 id="message-draft-discard-body",
+                classes="shmail-picker-body",
                 markup=False,
             )
             yield ListView(
@@ -115,13 +123,17 @@ class MessageDraftDiscardConfirmScreen(ModalScreen[str | None]):
                     else []
                 ),
                 id="message-draft-discard-list",
+                classes="shmail-picker-list",
             )
-            with Horizontal(id="message-draft-discard-shortcuts"):
+            with Horizontal(
+                id="message-draft-discard-shortcuts",
+                classes="shmail-picker-shortcuts",
+            ):
                 yield Static(select_key, classes="shortcut-key", markup=False)
                 yield Static("Choose", classes="shortcut-label", markup=False)
                 yield Static("•", classes="shortcut-separator")
                 yield Static(move_key, classes="shortcut-key", markup=False)
-                yield Static("Move", classes="shortcut-label", markup=False)
+                yield Static("Nav", classes="shortcut-label", markup=False)
                 yield Static("•", classes="shortcut-separator")
                 yield Static("CTRL+S", classes="shortcut-key", markup=False)
                 yield Static("Save", classes="shortcut-label", markup=False)
@@ -204,6 +216,12 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
             "Cancel Queued Send",
             show=False,
         ),
+        Binding(
+            settings.keybindings.retry_send,
+            "retry_send",
+            "Retry Send",
+            show=False,
+        ),
     ]
 
     def __init__(self, seed: MessageDraftSeed | None = None) -> None:
@@ -223,13 +241,31 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
 
     def compose(self) -> ComposeResult:
         """Render message draft fields, body mode tabs, and shortcut footer."""
-        with Vertical(id="message-draft-modal-container"):
+        with Vertical(id="message-draft-modal-container", classes="shmail-modal-panel"):
             with Vertical(id="message-draft-header-fields"):
-                yield Input(self.seed.to, placeholder="To", id="draft-to")
-                yield Input(self.seed.cc, placeholder="Cc", id="draft-cc")
-                yield Input(self.seed.bcc, placeholder="Bcc", id="draft-bcc")
                 yield Input(
-                    self.seed.subject, placeholder="Subject", id="draft-subject"
+                    self.seed.to,
+                    placeholder="To",
+                    id="draft-to",
+                    classes="shmail-form-input",
+                )
+                yield Input(
+                    self.seed.cc,
+                    placeholder="Cc",
+                    id="draft-cc",
+                    classes="shmail-form-input",
+                )
+                yield Input(
+                    self.seed.bcc,
+                    placeholder="Bcc",
+                    id="draft-bcc",
+                    classes="shmail-form-input",
+                )
+                yield Input(
+                    self.seed.subject,
+                    placeholder="Subject",
+                    id="draft-subject",
+                    classes="shmail-form-input",
                 )
 
             with TabbedContent(initial="draft-edit", id="message-draft-body-tabs"):
@@ -238,6 +274,7 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
                         self.seed.body,
                         id="message-draft-editor",
                         tab_behavior="focus",
+                        classes="shmail-form-textarea",
                     )
                 with TabPane("Rendered (Markdown)", id="draft-preview"):
                     yield Markdown(
@@ -395,6 +432,28 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
             notify(
                 "Queued send cancelled; draft restored locally.", severity="information"
             )
+
+    def action_retry_send(self) -> None:
+        """Retry one failed queued send from the draft modal."""
+        if self._draft is None or self._draft.state != "queued_to_send":
+            return
+        status = self._queued_send_status()
+        if (
+            int(status.get("failed_count") or 0) <= 0
+            and int(status.get("blocked_count") or 0) <= 0
+        ):
+            return
+        mutation_log = getattr(self.app, "mutation_log", None)
+        replay_mutations = getattr(self.app, "replay_mutations", None)
+        if mutation_log is None or not callable(replay_mutations):
+            return
+        mutation_ids = mutation_log.retry_draft_mutations(self._draft.id)
+        if not mutation_ids:
+            return
+        replay_mutations(mutation_ids)
+        notify = getattr(self.app, "notify", None)
+        if callable(notify):
+            notify("Retrying queued send.", severity="information")
 
     def on_unmount(self) -> None:
         """Flush pending autosave and stop timers when screen unmounts."""
@@ -613,26 +672,31 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
     def get_shortcuts(self) -> list[tuple[str, str]]:
         """Return compose footer shortcut set for current draft workflow."""
         if self._draft is not None and self._draft.state == "queued_to_send":
-            return [
+            shortcuts = [
                 (
                     binding_choices_label(settings.keybindings.delete_draft, "X"),
                     "Cancel Queue",
                 ),
-                (
-                    binding_choices_label(settings.keybindings.get_mail, "CTRL+G"),
-                    "Get Mail",
-                ),
                 (binding_choices_label(settings.keybindings.close, "Q/ESC"), "Close"),
             ]
+            status = self._queued_send_status()
+            if (
+                int(status.get("failed_count") or 0) > 0
+                or int(status.get("blocked_count") or 0) > 0
+            ):
+                shortcuts.insert(
+                    1,
+                    (
+                        binding_choices_label(settings.keybindings.retry_send, "Y"),
+                        "Retry Send",
+                    ),
+                )
+            return shortcuts
         return [
             ("CTRL+S", "Save"),
             (
                 binding_choices_label(settings.keybindings.send, "CTRL+ENTER"),
                 "Queue Send",
-            ),
-            (
-                binding_choices_label(settings.keybindings.get_mail, "CTRL+G"),
-                "Get Mail",
             ),
             (
                 binding_choices_label(
@@ -643,3 +707,12 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
             ("TAB", "Next"),
             (binding_choices_label(settings.keybindings.close, "Q/ESC"), "Close"),
         ]
+
+    def _queued_send_status(self) -> dict:
+        """Return replay status for the current queued-send draft."""
+        if self._draft is None:
+            return {}
+        repository = getattr(self.app, "repository", None)
+        if repository is None:
+            return {}
+        return repository.get_draft_mutation_summary(self._draft.id)

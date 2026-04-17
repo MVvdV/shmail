@@ -63,11 +63,24 @@ class LabelStateService:
         return None
 
     def can_edit_label(self, label_id: str) -> bool:
-        """Return True when the given label is a mutable user label."""
+        """Return True when the given label supports opening the editor."""
+        return self.can_edit_label_colors(label_id)
+
+    def can_edit_label_colors(self, label_id: str) -> bool:
+        """Return True when the given label supports color customization."""
+        label = self.get_label(label_id)
+        return label is not None
+
+    def can_rename_label(self, label_id: str) -> bool:
+        """Return True when the given label name may be edited."""
         label = self.get_label(label_id)
         if label is None:
             return False
         return str(label.get("type") or "").lower() == "user"
+
+    def can_delete_label(self, label_id: str) -> bool:
+        """Return True when the given label may be deleted."""
+        return self.can_rename_label(label_id)
 
     def parent_label_id_for(self, label_id: str) -> str | None:
         """Return the parent label identifier for one nested user label."""
@@ -164,13 +177,26 @@ class LabelStateService:
         text_color: str | None,
         gmail_service=None,
     ) -> LabelMutationResult:
-        """Update one user label and keep nested descendants coherent."""
-        current = self._require_user_label(label_id)
+        """Update one label, renaming only when the label is user-created."""
+        current = self._require_label(label_id)
+        if not self.can_rename_label(label_id):
+            return self.update_label_colors(
+                label_id=label_id,
+                background_color=background_color,
+                text_color=text_color,
+                gmail_service=gmail_service,
+            )
+
         normalized_name = self._normalize_leaf_name(leaf_name)
         next_full_name = self._compose_full_name(normalized_name, parent_label_id)
         previous_full_name = str(current.get("name") or "")
         self._ensure_unique_name(next_full_name, exclude_label_id=label_id)
-        color = self._normalize_color(background_color, text_color)
+        color = self._normalize_color(
+            background_color,
+            text_color,
+            current_background_color=str(current.get("background_color") or "") or None,
+            current_text_color=str(current.get("text_color") or "") or None,
+        )
 
         descendants = self.list_descendants(label_id)
         with self.repository.transaction() as conn:
@@ -212,6 +238,35 @@ class LabelStateService:
         self.refresh()
         return LabelMutationResult("updated", label_id, label_id)
 
+    def update_label_colors(
+        self,
+        *,
+        label_id: str,
+        background_color: str | None,
+        text_color: str | None,
+        gmail_service=None,
+    ) -> LabelMutationResult:
+        """Update only the stored colors for one existing label."""
+        current = self._require_label(label_id)
+        color = self._normalize_color(
+            background_color,
+            text_color,
+            current_background_color=str(current.get("background_color") or "") or None,
+            current_text_color=str(current.get("text_color") or "") or None,
+        )
+        with self.repository.transaction() as conn:
+            updated_label = self._patch_provider_label(
+                gmail_service if self._supports_provider_patch(current) else None,
+                current,
+                name=str(current.get("name") or ""),
+                color=color,
+                include_name=self.can_rename_label(label_id),
+            )
+            self.repository.upsert_label(conn, **updated_label)
+
+        self.refresh()
+        return LabelMutationResult("updated", label_id, label_id)
+
     def delete_label(self, *, label_id: str, gmail_service=None) -> LabelMutationResult:
         """Delete one user label when it has no nested descendants."""
         self._require_user_label(label_id)
@@ -228,14 +283,24 @@ class LabelStateService:
         self.refresh()
         return LabelMutationResult("deleted", label_id, focus_label_id)
 
-    def _require_user_label(self, label_id: str) -> dict:
-        """Return one user label or raise a validation error."""
+    def _require_label(self, label_id: str) -> dict:
+        """Return one existing label or raise a validation error."""
         label = self.get_label(label_id)
         if label is None:
             raise ValueError("Label not found.")
+        return label
+
+    def _require_user_label(self, label_id: str) -> dict:
+        """Return one user label or raise a validation error."""
+        label = self._require_label(label_id)
         if str(label.get("type") or "").lower() != "user":
             raise ValueError("System labels cannot be modified.")
         return label
+
+    @staticmethod
+    def _supports_provider_patch(label: dict) -> bool:
+        """Return True when one label maps to a provider-managed label."""
+        return str(label.get("type") or "").lower() == "user"
 
     def _normalize_leaf_name(self, leaf_name: str) -> str:
         """Normalize one editable leaf name and reject unsupported forms."""
@@ -269,15 +334,29 @@ class LabelStateService:
 
     @staticmethod
     def _normalize_color(
-        background_color: str | None, text_color: str | None
+        background_color: str | None,
+        text_color: str | None,
+        *,
+        current_background_color: str | None = None,
+        current_text_color: str | None = None,
     ) -> dict[str, str] | None:
         """Return one normalized Gmail color payload or None."""
         background = LabelStateService._normalize_color_value(background_color)
         text = LabelStateService._normalize_color_value(text_color)
+        current_background = LabelStateService._normalize_color_value(
+            current_background_color
+        )
+        current_text = LabelStateService._normalize_color_value(current_text_color)
         if background is None and text is None:
             return None
-        if background is None or text is None:
-            raise ValueError("Choose both background and text colors.")
+        if background is None and text is not None:
+            background = (
+                current_background or LabelStateService._auto_background_for_text(text)
+            )
+        if text is None and background is not None:
+            text = current_text or LabelStateService._auto_text_for_background(
+                background
+            )
         return {"backgroundColor": background, "textColor": text}
 
     @staticmethod
@@ -285,6 +364,30 @@ class LabelStateService:
         """Return one trimmed lowercase hex color or None."""
         value = str(color or "").strip()
         return value.lower() or None
+
+    @staticmethod
+    def _auto_text_for_background(background_color: str) -> str:
+        """Return a readable default text color for one background hex value."""
+        red, green, blue = LabelStateService._hex_to_rgb(background_color)
+        luminance = (0.299 * red) + (0.587 * green) + (0.114 * blue)
+        return "#000000" if luminance >= 186 else "#ffffff"
+
+    @staticmethod
+    def _auto_background_for_text(text_color: str) -> str:
+        """Return a simple contrasting background for one text hex value."""
+        return (
+            "#ffffff"
+            if LabelStateService._auto_text_for_background(text_color) == "#000000"
+            else "#000000"
+        )
+
+    @staticmethod
+    def _hex_to_rgb(color: str) -> tuple[int, int, int]:
+        """Return integer RGB components from one hex color string."""
+        value = color.removeprefix("#")
+        if len(value) != 6:
+            return (0, 0, 0)
+        return tuple(int(value[index : index + 2], 16) for index in (0, 2, 4))
 
     @staticmethod
     def _build_provider_body(
@@ -306,6 +409,7 @@ class LabelStateService:
         *,
         name: str,
         color: dict[str, str] | None,
+        include_name: bool = True,
     ) -> dict:
         """Patch one provider label when available and return local row shape."""
         if gmail_service is None:
@@ -319,7 +423,9 @@ class LabelStateService:
                 "text_color": (color or {}).get("textColor"),
             }
 
-        body: dict[str, object] = {"name": name}
+        body: dict[str, object] = {}
+        if include_name:
+            body["name"] = name
         if color is None:
             body["color"] = None
         else:

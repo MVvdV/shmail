@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Generator, List, Optional
 
 if TYPE_CHECKING:
-    from shmail.models import Message, MessageDraft
+    from shmail.models import Attachment, Message, MessageDraft
 
 from shmail.config import CONFIG_DIR
 from shmail.services.time import to_timestamp
@@ -104,6 +104,25 @@ class DatabaseRepository:
                         FOREIGN KEY (label_id) REFERENCES labels (id) ON DELETE CASCADE
                     )
                 """)
+
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS message_attachments (
+                        id TEXT PRIMARY KEY,
+                        message_id TEXT NOT NULL,
+                        attachment_index INTEGER NOT NULL,
+                        filename TEXT NOT NULL,
+                        mime_type TEXT,
+                        size_bytes INTEGER DEFAULT 0,
+                        content_id TEXT,
+                        content_disposition TEXT,
+                        is_inline BOOLEAN DEFAULT 0,
+                        FOREIGN KEY (message_id) REFERENCES messages (id) ON DELETE CASCADE
+                    )
+                    """
+                )
+
+                self._ensure_message_attachment_schema(conn)
 
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS metadata (
@@ -215,6 +234,25 @@ class DatabaseRepository:
             if column not in existing_columns:
                 conn.execute(
                     f"ALTER TABLE message_drafts ADD COLUMN {column} {definition}"
+                )
+
+    def _ensure_message_attachment_schema(self, conn: sqlite3.Connection) -> None:
+        """Apply additive schema updates required by attachment metadata."""
+        rows = conn.execute("PRAGMA table_info(message_attachments)").fetchall()
+        existing_columns = {row["name"] for row in rows}
+        required_columns = {
+            "attachment_index": "INTEGER NOT NULL DEFAULT 0",
+            "filename": "TEXT NOT NULL DEFAULT ''",
+            "mime_type": "TEXT",
+            "size_bytes": "INTEGER DEFAULT 0",
+            "content_id": "TEXT",
+            "content_disposition": "TEXT",
+            "is_inline": "BOOLEAN DEFAULT 0",
+        }
+        for column, definition in required_columns.items():
+            if column not in existing_columns:
+                conn.execute(
+                    f"ALTER TABLE message_attachments ADD COLUMN {column} {definition}"
                 )
 
     def _ensure_mutation_log_schema(self, conn: sqlite3.Connection) -> None:
@@ -449,6 +487,33 @@ class DatabaseRepository:
                   AND target_id = ?
                 """,
                 (message_id,),
+            ).fetchone()
+            return {
+                "pending_count": int(row["pending_count"] or 0)
+                if row is not None
+                else 0,
+                "failed_count": int(row["failed_count"] or 0) if row is not None else 0,
+                "blocked_count": int(row["blocked_count"] or 0)
+                if row is not None
+                else 0,
+                "state": str(row["state"] or "") if row is not None else "",
+            }
+
+    def get_draft_mutation_summary(self, draft_id: str) -> dict:
+        """Return pending and failed mutation counts for one queued-send draft."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    SUM(CASE WHEN state IN ('pending_local', 'ready_for_sync', 'in_flight') THEN 1 ELSE 0 END) AS pending_count,
+                    SUM(CASE WHEN state = 'failed' THEN 1 ELSE 0 END) AS failed_count,
+                    SUM(CASE WHEN state = 'blocked' THEN 1 ELSE 0 END) AS blocked_count,
+                    MAX(CASE WHEN state = 'failed' THEN 'failed' WHEN state = 'blocked' THEN 'blocked' WHEN state IN ('pending_local', 'ready_for_sync', 'in_flight') THEN state ELSE '' END) AS state
+                FROM mutation_log
+                WHERE target_kind = 'draft'
+                  AND target_id = ?
+                """,
+                (draft_id,),
             ).fetchone()
             return {
                 "pending_count": int(row["pending_count"] or 0)
@@ -1140,6 +1205,47 @@ class DatabaseRepository:
                 (message.id, label.id),
             )
 
+        self.replace_message_attachments(conn, message.id, message.attachments)
+
+    def replace_message_attachments(
+        self,
+        conn: sqlite3.Connection,
+        message_id: str,
+        attachments: list["Attachment"],
+    ) -> None:
+        """Replace all persisted attachment metadata for one message."""
+        conn.execute(
+            "DELETE FROM message_attachments WHERE message_id = ?", (message_id,)
+        )
+        for attachment in attachments:
+            conn.execute(
+                """
+                INSERT INTO message_attachments (
+                    id,
+                    message_id,
+                    attachment_index,
+                    filename,
+                    mime_type,
+                    size_bytes,
+                    content_id,
+                    content_disposition,
+                    is_inline
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    attachment.id,
+                    message_id,
+                    attachment.attachment_index,
+                    attachment.filename,
+                    attachment.mime_type,
+                    int(attachment.size_bytes),
+                    attachment.content_id,
+                    attachment.content_disposition,
+                    int(attachment.is_inline),
+                ),
+            )
+
     def upsert_message_draft(
         self, conn: sqlite3.Connection, draft: "MessageDraft"
     ) -> None:
@@ -1307,6 +1413,35 @@ class DatabaseRepository:
             ).fetchall()
             return [DatabaseRepository._normalize_label_row(dict(row)) for row in rows]
 
+    def list_message_attachments(self, message_id: str) -> List[dict]:
+        """Return attachment metadata rows for one message."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM message_attachments
+                WHERE message_id = ?
+                ORDER BY attachment_index ASC, filename ASC
+                """,
+                (message_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def get_message_attachment(
+        self, message_id: str, attachment_id: str
+    ) -> Optional[dict]:
+        """Return one attachment metadata row by identifier."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM message_attachments
+                WHERE message_id = ? AND id = ?
+                """,
+                (message_id, attachment_id),
+            ).fetchone()
+            return dict(row) if row is not None else None
+
     def list_thread_labels(self, thread_id: str) -> List[dict]:
         """Return union label rows for all provider messages in one thread."""
         with self.get_connection() as conn:
@@ -1372,7 +1507,7 @@ class DatabaseRepository:
         """Insert or update a label entry."""
         conn.execute(
             """
-            INSERT OR REPLACE INTO labels (
+            INSERT INTO labels (
                 id,
                 name,
                 type,
@@ -1382,6 +1517,13 @@ class DatabaseRepository:
                 text_color
             )
             VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                type = excluded.type,
+                label_list_visibility = excluded.label_list_visibility,
+                message_list_visibility = excluded.message_list_visibility,
+                background_color = excluded.background_color,
+                text_color = excluded.text_color
             """,
             (
                 label_id,

@@ -8,10 +8,10 @@
 - [~] Phase 5: Composition & Offline (5.1 and 5.2 local-first slices implemented; outbound/provider sync pending)
 - [~] Phase 6: Polish & Distribution (6.1b and 6.2 implemented; broader hardening/distribution work pending)
 
-## Session State (Last Handover: Mar 31 2026)
-- **Last Action**: Closed the session administratively, re-reviewed roadmap continuity after the lifecycle recovery hardening slice, and confirmed there were no additional code changes beyond the already-recorded wake/recovery work.
-- **Next Step**: Manually validate the new lifecycle recovery behavior under long-idle + sleep/wake conditions, then decide whether additional recovery affordances are needed (hard redraw command, sync timer pause/resume policy, or more aggressive worker invalidation).
-- **Blockers**: Provider sync-back is still intentionally deferred; lifecycle recovery needs real-world suspend/resume validation across terminals before we can treat the current hooks as sufficient.
+## Session State (Last Handover: Apr 17 2026)
+- **Last Action**: Executed session-close maintenance only for this session: summarized the already-completed Apr 17 work, refreshed roadmap handoff fields, and verified the roadmap update landed.
+- **Next Step**: Manually validate the current UI in a real terminal for the remaining polish questions: sleep/wake recovery under long idle, the new modal sizing rhythm, form-field visual parity across themes, and direct attachment download workflow in realistic mail data.
+- **Blockers**: Provider sync-back remains intentionally deferred. Attachment support is metadata-first with direct download, so cache/open/export lifecycle work is still deferred. Lifecycle recovery still needs real suspend/resume validation outside tests.
 
 ## Granular Tickets (Migrated)
 
@@ -211,11 +211,17 @@
         - Implemented (5.7a Local-first scaffolding): `mutation_log` table, `MessageMutationService`, `OutboundMessageService`, local thread/message label/move/trash/delete actions, current-view visibility projection in DB queries, and action-picker UI shells.
         - Implemented (5.7b Local UX follow-on): Outbox-specific thread affordances, queued-send recovery, restore-from-trash actions, and explicit queued indicators in thread/message surfaces.
         - Implemented (5.7c Replay scaffolding): `MutationLogService`, explicit mutation state transitions, deferred replay adapter protocol, pending-status surfacing in thread/message UI, and a first replay worker/orchestrator that drives claim/execute/ack/fail/block transitions.
-        - Implemented (5.7d Inspector UX): mutation inspector modal, manual replay/block actions, and globally accessible diagnostic review from the keyboard.
-        - Implemented (5.7e Inline-first status UX): thread rows and message cards now explain queued/failed local state and recovery actions in place so mailbox surfaces remain self-describing without requiring the inspector.
-        - Implemented (5.7f Retry/backoff scaffolding): failed mutations now capture retry metadata (`retry_count`, `last_attempt_at`, `next_attempt_at`), and inline retry actions exist on thread/message surfaces via `Ctrl+R`.
-        - Implemented (5.7g Thread/mailbox UX corrections): thread rows are compact again with union label chips, generic pending/queued UI was removed for non-outbox mutations, thread-level label edits now apply as add/remove deltas, and category labels participate in label selection alongside user labels and mailbox markers.
-        - Remaining: provider adapter execution beyond deferred blocking, richer mutation inspection filters/bulk actions, automatic replay scheduling that respects backoff windows once sync-back is enabled, and later per-item inline action widgets beyond shortcut-driven recovery.
+        - Implemented (5.7d Inspector UX, later removed): mutation inspector once existed for diagnostics, but the product now removes that surface entirely in favor of inline-first state and recovery. Mutation log remains infrastructure only.
+        - Implemented (5.7e Inline-first status UX): thread rows and message cards explain queued/failed local state and recovery actions in place so mailbox surfaces remain self-describing without any inspector dependency.
+        - Implemented (5.7f Retry/backoff scaffolding): failed mutations capture retry metadata (`retry_count`, `last_attempt_at`, `next_attempt_at`), but user-facing retry is now narrowed to `Retry Send` on failed queued-send/outbox drafts only; global reconciliation is exposed as `Sync`.
+        - Implemented (5.7g Thread/mailbox UX corrections): thread rows are compact again with union label chips, generic pending/queued UI was removed for non-outbox mutations, thread-level label edits apply as add/remove deltas, system/app labels can be recolored without renaming, and label metadata edits preserve message associations.
+        - Remaining: provider adapter execution beyond deferred blocking, automatic replay scheduling that respects backoff windows once sync-back is enabled, and later per-item inline action widgets beyond shortcut-driven recovery.
+ - [~] **Ticket 5.10**: Attachment Metadata & Direct Download UX.
+    - **Goal**: Surface attachments in-thread before any cache/open lifecycle work or provider sync-back is implemented.
+    - **Status Notes (Apr 17 2026)**:
+        - Implemented: attachment metadata extraction during parsing/sync, `message_attachments` persistence, thread-viewer read model exposure, inline message-header attachment selector, per-attachment download, and `Download all attachments` direct-to-download-folder workflow.
+        - Implemented: configurable attachment download directory with default user Downloads folder.
+        - Deferred: attachment cache/index, reopen/export lifecycle, retention policy, and richer already-downloaded actions.
 - [ ] **Ticket 5.9**: Outbound Idempotency Contract.
     - **Goal**: Guarantee at-least-once local replay does not create duplicate provider-side effects.
     - **Scope**:
@@ -430,3 +436,4 @@
 - [Mar 27 2026]: Implemented the first lifecycle recovery hardening slice: app focus/resume/resize hooks now trigger centralized redraw/reflow recovery, cached provider clients are reset on recovery, and sync results are dropped when they predate the latest lifecycle generation.
 - [Mar 27 2026]: Recorded the next lifecycle-recovery contingencies for post-validation follow-up: optional hard redraw command, suspend-aware sync timer restart, stronger worker invalidation, and more aggressive provider/auth transport reset if manual wake testing still shows freeze or offset symptoms.
 - [Mar 31 2026 (Session Close)]: Executed the session-close workflow with no new code changes, refreshed `Session State` to carry forward the lifecycle-recovery validation target, and re-verified roadmap continuity for the next session.
+- [Apr 17 2026 (Session Close)]: Executed the session-close workflow for an administrative handoff only. Preserved the existing Apr 17 implementation status, refreshed `Session State`, and re-verified roadmap continuity with manual UI validation still fixed as the next execution target.
