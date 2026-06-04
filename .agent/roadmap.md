@@ -8,10 +8,10 @@
 - [~] Phase 5: Composition & Offline (5.1 and 5.2 local-first slices implemented; outbound/provider sync pending)
 - [~] Phase 6: Polish & Distribution (6.1b and 6.2 implemented; broader hardening/distribution work pending)
 
-## Session State (Last Handover: Apr 17 2026)
+## Session State (Last Handover: Apr 22 2026)
 - **Last Action**: Executed session-close maintenance only for this session: summarized the already-completed Apr 17 work, refreshed roadmap handoff fields, and verified the roadmap update landed.
-- **Next Step**: Manually validate the current UI in a real terminal for the remaining polish questions: sleep/wake recovery under long idle, the new modal sizing rhythm, form-field visual parity across themes, and direct attachment download workflow in realistic mail data.
-- **Blockers**: Provider sync-back remains intentionally deferred. Attachment support is metadata-first with direct download, so cache/open/export lifecycle work is still deferred. Lifecycle recovery still needs real suspend/resume validation outside tests.
+- **Next Step**: Start the next composition slice by designing and implementing local-first outbound draft attachments: persist draft attachment metadata separately from inbound message attachments, store attachment bytes in app-managed draft storage on disk, expose add/remove/list attachment controls in compose, project attachment presence into draft/outbox views, and build outbound MIME from persisted draft attachments rather than transient UI state or mutation-log blobs.
+- **Blockers**: Provider sync-back remains intentionally deferred. Outbound attachment support is not yet implemented; current draft/outbox projections assume `has_attachments = 0`, and attachment bytes need a durable local storage contract before replay-enabled send can safely support them.
 
 ## Granular Tickets (Migrated)
 
@@ -217,11 +217,30 @@
         - Implemented (5.7g Thread/mailbox UX corrections): thread rows are compact again with union label chips, generic pending/queued UI was removed for non-outbox mutations, thread-level label edits apply as add/remove deltas, system/app labels can be recolored without renaming, and label metadata edits preserve message associations.
         - Remaining: provider adapter execution beyond deferred blocking, automatic replay scheduling that respects backoff windows once sync-back is enabled, and later per-item inline action widgets beyond shortcut-driven recovery.
  - [~] **Ticket 5.10**: Attachment Metadata & Direct Download UX.
-    - **Goal**: Surface attachments in-thread before any cache/open lifecycle work or provider sync-back is implemented.
-    - **Status Notes (Apr 17 2026)**:
-        - Implemented: attachment metadata extraction during parsing/sync, `message_attachments` persistence, thread-viewer read model exposure, inline message-header attachment selector, per-attachment download, and `Download all attachments` direct-to-download-folder workflow.
-        - Implemented: configurable attachment download directory with default user Downloads folder.
-        - Deferred: attachment cache/index, reopen/export lifecycle, retention policy, and richer already-downloaded actions.
+     - **Goal**: Surface attachments in-thread before any cache/open lifecycle work or provider sync-back is implemented.
+     - **Status Notes (Apr 17 2026)**:
+         - Implemented: attachment metadata extraction during parsing/sync, `message_attachments` persistence, thread-viewer read model exposure, inline message-header attachment selector, per-attachment download, and `Download all attachments` direct-to-download-folder workflow.
+         - Implemented: configurable attachment download directory with default user Downloads folder.
+         - Deferred: attachment cache/index, reopen/export lifecycle, retention policy, and richer already-downloaded actions.
+- [ ] **Ticket 5.11**: Local-First Outbound Draft Attachments.
+    - **Goal**: Allow compose/outbox drafts to carry durable outbound attachments before provider replay is enabled.
+    - **Scope**:
+        - Introduce a dedicated draft-attachment model and persistence layer separate from inbound `message_attachments`.
+        - Store outbound attachment bytes in app-managed draft storage on disk; persist metadata and storage paths in SQLite rather than embedding blobs in `message_drafts` or `mutation_log`.
+        - Add compose-screen attachment UX for add/remove/list flows with validation for missing, unreadable, duplicate-name, and oversized files.
+        - Preserve attachment state across autosave, draft reopen, queued-send, queued-send cancel, app restart, and draft deletion cleanup.
+        - Expose attachment presence/count in draft and outbox thread/message projections so local-first state stays visible before replay exists.
+        - Build outbound RFC822/MIME from persisted draft body plus persisted draft attachments at queue/replay time; keep mutation payloads attachment-light and draft-referential rather than blob-canonical.
+    - **Acceptance Criteria**:
+        - A user can attach one or more local files to a draft, close/reopen the app, and still see the same attachments on that draft.
+        - Queueing a send preserves the exact attachment set in `OUTBOX`, and canceling queued send restores the draft with attachments intact.
+        - Draft deletion removes attachment records and performs best-effort cleanup of app-managed attachment files.
+        - Outbound MIME generation produces multipart messages with the text body plus all persisted attachments.
+        - Tests cover persistence, cleanup, projection/read-model exposure, queued-send reopen/cancel behavior, and MIME generation with attachments.
+    - **Research/Considerations**:
+        - Prefer a dedicated `draft_attachments` table plus app-managed file storage under a Shmail-owned draft-attachment directory.
+        - Do not automatically forward/reply with inbound attachments in v1; treat forwarded original attachments as a later policy/UI slice.
+        - Keep the draft layer provider-agnostic so future Gmail replay only needs to serialize the already-built MIME message.
 - [ ] **Ticket 5.9**: Outbound Idempotency Contract.
     - **Goal**: Guarantee at-least-once local replay does not create duplicate provider-side effects.
     - **Scope**:
@@ -437,3 +456,4 @@
 - [Mar 27 2026]: Recorded the next lifecycle-recovery contingencies for post-validation follow-up: optional hard redraw command, suspend-aware sync timer restart, stronger worker invalidation, and more aggressive provider/auth transport reset if manual wake testing still shows freeze or offset symptoms.
 - [Mar 31 2026 (Session Close)]: Executed the session-close workflow with no new code changes, refreshed `Session State` to carry forward the lifecycle-recovery validation target, and re-verified roadmap continuity for the next session.
 - [Apr 17 2026 (Session Close)]: Executed the session-close workflow for an administrative handoff only. Preserved the existing Apr 17 implementation status, refreshed `Session State`, and re-verified roadmap continuity with manual UI validation still fixed as the next execution target.
+- [Apr 22 2026]: Planned the next composition slice for outbound draft attachments. Direction is to add dedicated local-first draft attachment persistence (metadata in SQLite, bytes in app-managed disk storage), compose add/remove/list UX, draft/outbox attachment projections, and multipart MIME generation from persisted attachments without storing blobs in `mutation_log`.
