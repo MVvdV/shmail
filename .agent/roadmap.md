@@ -13,6 +13,9 @@
 - **Next Step**: Start the next composition slice by designing and implementing local-first outbound draft attachments: persist draft attachment metadata separately from inbound message attachments, store attachment bytes in app-managed draft storage on disk, expose add/remove/list attachment controls in compose, project attachment presence into draft/outbox views, and build outbound MIME from persisted draft attachments rather than transient UI state or mutation-log blobs.
 - **Blockers**: Provider sync-back remains intentionally deferred. Outbound attachment support is not yet implemented; current draft/outbox projections assume `has_attachments = 0`, and attachment bytes need a durable local storage contract before replay-enabled send can safely support them.
 
+## Ticket Operating Rule
+- When implementation, QA, review, or handoff on a ticket reveals new, follow-up, or derivative work, the required output of that ticket includes creating explicit new roadmap tickets for the discovered work. Do not leave future implementation work only as prose in notes, blockers, comments, or handoff entries.
+
 ## Granular Tickets (Migrated)
 
 ### Phase 1: Foundation & Auth
@@ -457,3 +460,4 @@
 - [Mar 31 2026 (Session Close)]: Executed the session-close workflow with no new code changes, refreshed `Session State` to carry forward the lifecycle-recovery validation target, and re-verified roadmap continuity for the next session.
 - [Apr 17 2026 (Session Close)]: Executed the session-close workflow for an administrative handoff only. Preserved the existing Apr 17 implementation status, refreshed `Session State`, and re-verified roadmap continuity with manual UI validation still fixed as the next execution target.
 - [Apr 22 2026]: Planned the next composition slice for outbound draft attachments. Direction is to add dedicated local-first draft attachment persistence (metadata in SQLite, bytes in app-managed disk storage), compose add/remove/list UX, draft/outbox attachment projections, and multipart MIME generation from persisted attachments without storing blobs in `mutation_log`.
+- [Jun 04 2026]: Added ticket operating rule: any new, follow-up, or derivative implementation work discovered while working a ticket must be captured as explicit new roadmap tickets, not left only in prose notes or blockers.

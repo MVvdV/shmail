@@ -236,6 +236,7 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
         self._autosave_timer = None
         self._dirty_since_open = False
         self._created_draft_on_open = False
+        self._preserve_created_draft_on_close = False
         self._discard_requested = False
         self._suspend_change_tracking = False
 
@@ -370,6 +371,8 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
     def action_save_draft(self) -> None:
         """Persist draft immediately and confirm save state to the user."""
         self._persist_now(notify_user=True)
+        if self._draft is not None:
+            self._preserve_created_draft_on_close = True
 
     def action_send_draft(self) -> None:
         """Queue the current draft for send without provider replay."""
@@ -562,6 +565,17 @@ class MessageDraftScreen(ModalScreen[MessageDraftCloseUpdate | None]):
     def _close_without_confirmation(self) -> None:
         """Persist current draft state and dismiss compose modal."""
         self._stop_autosave_timer()
+        if (
+            self._created_draft_on_open
+            and not self._preserve_created_draft_on_close
+            and not self._has_session_changes()
+        ):
+            if self._draft_service is not None and self._draft is not None:
+                self._draft_service.delete_draft(self._draft.id)
+            self._draft = None
+            self._discard_requested = True
+            self.dismiss(self._build_close_update())
+            return
         self._persist_now(notify_user=False)
         self.dismiss(self._build_close_update())
 

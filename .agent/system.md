@@ -53,3 +53,6 @@
    - Never delete historical data, completed tickets, or handoff entries from `./roadmap.md`.
    - Always preserve full project evolution context.
    - Only add new entries or amend existing items when implementation strategy changes materially.
+11. **Derivative Work Capture**:
+   - When work on a ticket reveals new, follow-up, or derivative tasks, the ticket output must include creation of explicit new roadmap tickets for that work.
+   - Do not leave newly discovered work only in prose, comments, blockers, or handoff notes when it needs future implementation.

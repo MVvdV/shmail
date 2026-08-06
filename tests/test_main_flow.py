@@ -638,7 +638,7 @@ def test_message_draft_close_with_changes_opens_discard_confirmation(test_db):
 
 
 def test_message_draft_close_without_edits_does_not_prompt(test_db):
-    """Verify open-close without edits dismisses directly without confirmation."""
+    """Verify open-close without edits dismisses directly and removes empty draft."""
 
     async def run_test():
         app = MockApp(test_db)
@@ -652,6 +652,29 @@ def test_message_draft_close_without_edits_does_not_prompt(test_db):
             await pilot.pause()
 
             assert isinstance(app.screen, MainScreen)
+            assert test_db.list_message_drafts() == []
+
+    asyncio.run(run_test())
+
+
+def test_message_draft_explicit_save_without_edits_preserves_draft(test_db):
+    """Verify explicit save keeps an auto-created draft even without edits."""
+
+    async def run_test():
+        app = MockApp(test_db)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            assert isinstance(app.screen, MessageDraftScreen)
+            app.screen.action_save_draft()
+            await pilot.pause()
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert isinstance(app.screen, MainScreen)
+            assert len(test_db.list_message_drafts()) == 1
 
     asyncio.run(run_test())
 
